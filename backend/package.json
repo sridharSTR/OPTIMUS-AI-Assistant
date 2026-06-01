@@ -1,0 +1,11 @@
+{
+  "name": "chartbot-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "python manage.py runserver",
+    "start": "python manage.py runserver",
+    "check": "python manage.py check",
+    "migrate": "python manage.py migrate"
+  }
+}

@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  background: #050814;
+  color: #e5eefb;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.auth-field-input {
+  background: transparent !important;
+  caret-color: #ffffff;
+  color-scheme: dark;
+}
+
+.auth-field-input:-webkit-autofill,
+.auth-field-input:-webkit-autofill:hover,
+.auth-field-input:-webkit-autofill:focus,
+.auth-field-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px rgba(15, 23, 42, 0.08) inset !important;
+  -webkit-text-fill-color: #ffffff !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  caret-color: #ffffff;
+  transition: background-color 999999s ease-in-out 0s;
+}
+
+.auth-field-input::selection {
+  background: rgba(34, 211, 238, 0.32);
+  color: #ffffff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 232, 249, 0.35) rgba(255, 255, 255, 0.06);
+}
+
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(103, 232, 249, 0.35);
+  border-radius: 999px;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
