@@ -71,7 +71,7 @@ The frontend uses a Vite proxy for API calls. Browser requests go to `/api/...` 
 
 - PostgreSQL is the recommended primary database for development and production.
 - Set `DB_ENGINE=postgres` and the PostgreSQL variables in `backend/.env`.
-- JWT access and refresh tokens are stored in browser `localStorage` only after OTP verification succeeds.
+- JWT access and refresh tokens are set as auth cookies after OTP verification; the frontend also keeps returned tokens in `localStorage` for bearer-token compatibility.
 - OTP emails are sent to the registered user's email address.
 - `ADMIN_EMAIL` is only for admin notifications and sender fallback.
 - `SHOW_DEV_OTP=False` keeps OTP hidden from the frontend.
@@ -101,7 +101,7 @@ OPTIMUS uses **PostgreSQL** as the primary database for development and producti
 
 ```env
 DB_ENGINE=postgres
-POSTGRES_DB=jarvis_db
+POSTGRES_DB=chartbot
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_password
 POSTGRES_HOST=localhost
@@ -141,7 +141,7 @@ pip install -r requirements.txt
 ### Create Database
 
 ```sql
-CREATE DATABASE jarvis_db;
+CREATE DATABASE chartbot;
 ```
 
 ### Apply Migrations
@@ -297,7 +297,7 @@ PostgreSQL serves as the central persistence layer for OPTIMUS, storing user dat
 
 ## Secure Cookie JWT Auth
 
-JWTs are stored in httpOnly cookies instead of `localStorage`.
+JWTs are set in httpOnly cookies by the backend. The current frontend also stores returned access and refresh tokens in `localStorage` for bearer-token compatibility and refresh retry support.
 
 Backend settings:
 
@@ -323,15 +323,15 @@ response.set_cookie("jarvis_access", access, httponly=True, secure=True, samesit
 response.set_cookie("jarvis_refresh", refresh, httponly=True, secure=True, samesite="Strict")
 ```
 
-The custom DRF auth class reads `jarvis_access` from cookies. `/api/token/refresh/` reads `jarvis_refresh`, rotates tokens, and sets fresh cookies. Logout blacklists the refresh token when available and clears both cookies.
+The custom DRF auth class reads `jarvis_access` from cookies and can also authenticate bearer tokens. `/api/token/refresh/` reads `jarvis_refresh` from cookies or a submitted refresh token, rotates tokens, and sets fresh cookies. Logout blacklists the refresh token when available and clears both cookies.
 
-React no longer stores tokens. Axios is configured with:
+Axios is configured to send cookies with API requests:
 
 ```js
 axios.create({ baseURL: API_BASE_URL, withCredentials: true });
 ```
 
-On a `401`, React calls `/api/token/refresh/` with credentials and retries the original request.
+On a `401`, React calls `/api/token/refresh/` with credentials, updates stored tokens when returned, and retries the original request.
 
 ## Chat Rate Limiting
 
@@ -716,8 +716,8 @@ Below is the step-by-step journey of a chat message through the OPTIMUS chatbot 
 The project supports parsing and analyzing resumes locally with AI-assisted reviews:
 
 1. **Upload**: The user uploads their PDF resume through the frontend dashboard.
-2. **Transport**: React makes a multipart `POST` request to `/api/ai/resume/` with the PDF file.
-3. **Text Extraction**: The backend intercepts the file and reads it using `PyPDF2` (via `extract_pdf_text()`) to get the raw text payload.
+2. **Transport**: React makes a multipart `POST` request to `/api/ai/resume-analyses/` with the PDF file.
+3. **Text Extraction**: The backend reads the file with `pdfplumber` first, then falls back to OCR with `pdf2image` and `pytesseract` when the extracted text is too short.
 4. **Skill Mapping**: The system checks the text against a list of known full-stack/AI skills (e.g., Python, React, NLP, Docker) to extract matching skills.
 5. **Section Detection**: Isolates sections for *Education*, *Projects*, and *Experience* by scanning for heading matches and parsing surrounding lines.
 6. **Scoring**: Computes a score out of 100 based on found skills and the presence of essential resume sections.
@@ -1132,5 +1132,3 @@ Do not call Django directly with HTTPS unless Django is configured with HTTPS se
 The backend exposes auth and chat endpoints through Django REST Framework. Register and login both require OTP email verification before JWT tokens are returned. Authenticated chat requests are saved as `Message` rows linked to a user-owned `Conversation`. The AI service sends recent conversation context to OpenRouter or Gemini, then stores the assistant response.
 
 The frontend has login/register screens, an OTP verification step, and a chat page. Axios attaches the JWT bearer token and attempts token refresh when the access token expires.
-
-The chat page stores its last scroll position and first visible message in `sessionStorage`, then restores them when the user returns to Chat. Sending a new message still scrolls to the latest reply.
