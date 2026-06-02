@@ -23,10 +23,12 @@ class ChatRequestSerializer(serializers.Serializer):
 
 
 class MemorySerializer(serializers.ModelSerializer):
+    memory_id = serializers.CharField(source="id", read_only=True)
+
     class Meta:
         model = Memory
-        fields = ("id", "key", "value", "importance", "created_at", "last_accessed_at")
-        read_only_fields = ("id", "created_at", "last_accessed_at")
+        fields = ("id", "memory_id", "key", "value", "importance", "created_at", "updated_at", "last_accessed_at")
+        read_only_fields = ("id", "memory_id", "created_at", "updated_at", "last_accessed_at")
 
 
 class NLPEventSerializer(serializers.ModelSerializer):

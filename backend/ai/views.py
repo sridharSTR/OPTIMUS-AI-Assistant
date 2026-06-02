@@ -175,6 +175,7 @@ class ChatView(APIView):
             user_message,
             nlp_result["intent"],
             saved_memories=nlp_result["saved_memories"],
+            memory_sync=nlp_result.get("memory_sync"),
         )
         if local_response:
             route = nlp_result["intent"]
@@ -186,13 +187,12 @@ class ChatView(APIView):
             )
             conversation.save(update_fields=["updated_at"])
             update_event_route(event, route=route, handled_locally=True)
-            return Response(
-                {
-                    "conversation": ConversationSerializer(conversation).data,
-                    "message": MessageSerializer(assistant_message).data,
-                    "nlp": build_nlp_payload(nlp_result, route=route, handled_locally=True),
-                },
-                status=status.HTTP_201_CREATED,
+            return chat_response(
+                conversation,
+                assistant_message,
+                nlp_result,
+                route=route,
+                handled_locally=True,
             )
 
         if nlp_result["intent"] == "retrieve_memory":
@@ -204,13 +204,12 @@ class ChatView(APIView):
             assistant_message = Message.objects.create(conversation=conversation, role="assistant", content=content, intent=route)
             conversation.save(update_fields=["updated_at"])
             update_event_route(event, route=route, handled_locally=True)
-            return Response(
-                {
-                    "conversation": ConversationSerializer(conversation).data,
-                    "message": MessageSerializer(assistant_message).data,
-                    "nlp": build_nlp_payload(nlp_result, route=route, handled_locally=True),
-                },
-                status=status.HTTP_201_CREATED,
+            return chat_response(
+                conversation,
+                assistant_message,
+                nlp_result,
+                route=route,
+                handled_locally=True,
             )
 
         cache = get_cached_response(request.user, user_message, nlp_result["intent"])
@@ -219,13 +218,13 @@ class ChatView(APIView):
             assistant_message = Message.objects.create(conversation=conversation, role="assistant", content=cache.response, intent=route)
             conversation.save(update_fields=["updated_at"])
             update_event_route(event, route=route, handled_locally=True, cache_hit=True)
-            return Response(
-                {
-                    "conversation": ConversationSerializer(conversation).data,
-                    "message": MessageSerializer(assistant_message).data,
-                    "nlp": build_nlp_payload(nlp_result, route=route, handled_locally=True, cache_hit=True),
-                },
-                status=status.HTTP_201_CREATED,
+            return chat_response(
+                conversation,
+                assistant_message,
+                nlp_result,
+                route=route,
+                handled_locally=True,
+                cache_hit=True,
             )
 
         history = conversation.messages.order_by("-created_at")[:12]
@@ -270,18 +269,25 @@ class ChatView(APIView):
         conversation.save(update_fields=["updated_at"])
         update_event_route(event, route=route, ai_called=True)
 
-        return Response(
-            {
-                "conversation": ConversationSerializer(conversation).data,
-                "message": MessageSerializer(assistant_message).data,
-                "nlp": build_nlp_payload(
-                    nlp_result,
-                    route=route,
-                    ai_called=True,
-                ),
-            },
-            status=status.HTTP_201_CREATED,
+        return chat_response(
+            conversation,
+            assistant_message,
+            nlp_result,
+            route=route,
+            ai_called=True,
         )
+
+
+def chat_response(conversation, assistant_message, nlp_result, **payload_flags):
+    memory_sync = nlp_result.get("memory_sync")
+    data = {
+        "conversation": ConversationSerializer(conversation).data,
+        "message": MessageSerializer(assistant_message).data,
+        "nlp": build_nlp_payload(nlp_result, **payload_flags),
+    }
+    if memory_sync:
+        data["memory_sync"] = memory_sync
+    return Response(data, status=status.HTTP_201_CREATED)
 
 
 def format_memory_response(memories):

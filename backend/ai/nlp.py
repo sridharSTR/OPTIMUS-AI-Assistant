@@ -14,6 +14,8 @@ INTENTS = {
     "general_chat",
     "web_search",
     "save_memory",
+    "update_memory",
+    "delete_memory",
     "retrieve_memory",
     "profile",
     "resume_analysis",
@@ -51,8 +53,26 @@ MEMORY_PATTERNS = (
     (re.compile(r"\bi am learning (?P<value>[A-Za-z0-9+# .'-]{1,80})", re.I), "learning", 4),
     (re.compile(r"\bmy goal is to (?P<value>[^.?!]{3,120})", re.I), "goal", 5),
     (re.compile(r"\bi prefer (?P<value>[^.?!]{3,100})", re.I), "preference", 4),
+    (re.compile(r"\bsave (?:my )?(?P<key>[^.?!]{2,50}?) is (?P<value>[^.?!]{2,100})", re.I), "custom", 4),
     (re.compile(r"\bremember (?:that )?(?P<key>[^.?!]{2,50}?) is (?P<value>[^.?!]{2,100})", re.I), "custom", 4),
-    (re.compile(r"\bmy favorite (?P<key>[A-Za-z ]{2,40}) is (?P<value>[^.?!]{2,80})", re.I), "favorite", 4),
+    (re.compile(r"\bmy favou?rite (?P<key>[A-Za-z ]{2,40}) is (?P<value>[^.?!]{2,80})", re.I), "favorite", 4),
+    (re.compile(r"\bmy hobby is (?P<value>[^.?!]{2,80})", re.I), "hobby", 4),
+    (re.compile(r"\bmy interest (?:is|in) (?P<value>[^.?!]{2,80})", re.I), "interest", 4),
+    (re.compile(r"\bmy (?P<key>[A-Za-z][A-Za-z ]{1,50}) is (?P<value>[^.?!]{2,100})", re.I), "custom", 3),
+)
+
+UPDATE_MEMORY_PATTERNS = (
+    (re.compile(r"\b(?:update|change) my memory (?:for|about)?\s*(?P<key>[^.?!]{2,60}?)\s+(?:to|is)\s+(?P<value>[^.?!]{2,120})", re.I), "update"),
+    (re.compile(r"\b(?:update|change) my (?P<key>[^.?!]{2,60}?)\s+(?:to|is)\s+(?P<value>[^.?!]{2,120})", re.I), "update"),
+    (re.compile(r"\bnow my (?P<key>[^.?!]{2,60}?) is (?P<value>[^.?!]{2,120})", re.I), "update"),
+)
+
+DELETE_MEMORY_PATTERNS = (
+    (re.compile(r"(?:delete|remove|forget)\s+(?:you|your|my)?\s*memory\s+(?:about\s+)?(?P<key>[^.?!]{2,80})", re.I), "delete"),
+    (re.compile(r"(?:delete|remove|forget)\s+(?:my\s+)?memory\s+(?:about\s+)?(?P<key>[^.?!]{2,60})", re.I), "delete"),
+    (re.compile(r"(?:forget|remove|delete)\s+(?:that\s+)?(?P<key>[^.?!]{2,60})\s+(?:from\s+)?my\s+memories?", re.I), "delete"),
+    (re.compile(r"(?:remove|delete|forget)\s+my\s+(?P<key>[^.?!]{2,60})", re.I), "delete"),
+    (re.compile(r"(?:clear|erase)\s+(?:my\s+)?(?P<key>[^.?!]{2,60})", re.I), "delete"),
 )
 
 ENTITY_LABELS = {
@@ -72,7 +92,12 @@ def process_message(user, message):
     sentiment, score = analyze_sentiment(text)
     intent = detect_intent(text)
     search_triggered = intent == "web_search"
-    saved_memories = save_detected_memories(user, text, entities)
+    saved_memories = save_detected_memories(user, text, entities) if intent == "save_memory" else []
+    memory_sync = build_memory_sync(user, "save", "Memory saved successfully") if saved_memories else None
+    if intent == "update_memory":
+        memory_sync = update_detected_memory(user, text)
+    elif intent == "delete_memory":
+        memory_sync = delete_detected_memory(user, text)
     faq_answer = get_faq_answer(text) if intent == "faq" else ""
 
     return {
@@ -82,6 +107,7 @@ def process_message(user, message):
         "sentiment_score": score,
         "search_triggered": search_triggered,
         "saved_memories": saved_memories,
+        "memory_sync": memory_sync,
         "faq_answer": faq_answer,
     }
 
@@ -108,7 +134,11 @@ def detect_intent(message):
         return "resume_analysis"
     if any(term in lowered for term in ("show my memories", "list memories", "what do you remember", "my memories")):
         return "retrieve_memory"
-    if lowered.startswith("remember ") or any(pattern.search(message) for pattern, _, _ in MEMORY_PATTERNS):
+    if any(pattern.search(message) for pattern, _ in DELETE_MEMORY_PATTERNS):
+        return "delete_memory"
+    if any(pattern.search(message) for pattern, _ in UPDATE_MEMORY_PATTERNS):
+        return "update_memory"
+    if lowered.startswith(("remember ", "save my memory", "store this in memory")) or any(pattern.search(message) for pattern, _, _ in MEMORY_PATTERNS):
         return "save_memory"
     if should_search_live_web(message):
         return "web_search"
@@ -135,7 +165,7 @@ def get_faq_answer(message):
     return ""
 
 
-def get_fast_local_response(user, message, intent, saved_memories=None):
+def get_fast_local_response(user, message, intent, saved_memories=None, memory_sync=None):
     lowered = message.lower().strip()
     if intent == "faq":
         return get_faq_answer(message)
@@ -156,6 +186,10 @@ def get_fast_local_response(user, message, intent, saved_memories=None):
     if intent == "save_memory" and saved_memories:
         lines = [f"* **{item['key']}**: {item['value']}" for item in saved_memories]
         return "## Memory Saved\n\n" + "\n".join(lines)
+    if intent == "update_memory":
+        return local_memory_action_response("Memory Updated", memory_sync)
+    if intent == "delete_memory":
+        return local_memory_action_response("Memory Deleted", memory_sync)
     return ""
 
 
@@ -222,6 +256,7 @@ def get_spacy_model():
 
 def save_detected_memories(user, message, entities):
     memories = []
+    saved_keys = set()
 
     for pattern, default_key, importance in MEMORY_PATTERNS:
         match = pattern.search(message)
@@ -229,10 +264,15 @@ def save_detected_memories(user, message, entities):
             continue
         key = match.groupdict().get("key") or default_key
         value = match.group("value").strip(" .")
-        memories.append(save_memory(user, normalize_key(key), value, importance))
+        normalized_key = normalize_key(clean_memory_key(key))
+        if normalized_key in saved_keys:
+            continue
+        saved_keys.add(normalized_key)
+        memories.append(save_memory(user, normalized_key, value, importance))
 
     for name in entities.get("names", []):
-        if re.search(r"\bmy name is\b", message, re.I):
+        if re.search(r"\bmy name is\b", message, re.I) and "name" not in saved_keys:
+            saved_keys.add("name")
             memories.append(save_memory(user, "name", name, 5))
 
     return [serialize_memory(memory) for memory in memories if memory]
@@ -242,11 +282,100 @@ def save_memory(user, key, value, importance=3):
     memory, _ = Memory.objects.update_or_create(
         user=user,
         key=key[:80],
-        value=value,
-        defaults={"importance": importance},
+        defaults={"value": value, "importance": importance},
     )
     enforce_memory_limit(user)
     return memory
+
+
+def update_detected_memory(user, message):
+    parsed = parse_memory_update(message)
+    if not parsed:
+        return build_memory_sync(user, "update", "Could not identify which memory to update", status="error")
+
+    key, value = parsed
+    normalized = normalize_key(key)
+    memory = find_memory_by_key(user, normalized)
+    if not memory:
+        return build_memory_sync(user, "update", f"No memory found for {normalized}", status="error")
+
+    memory.value = value
+    memory.save(update_fields=["value", "updated_at"])
+    return build_memory_sync(user, "update", "Memory updated successfully")
+
+
+def delete_detected_memory(user, message):
+    key = parse_memory_delete_key(message)
+    if not key:
+        return build_memory_sync(user, "delete", "Could not identify which memory to delete", status="error")
+
+    normalized = normalize_key(key)
+    memory = find_memory_by_key(user, normalized)
+    if not memory:
+        return build_memory_sync(user, "delete", f"No memory found for {normalized}", status="error")
+
+    memory.delete()
+    return build_memory_sync(user, "delete", "Memory deleted successfully")
+
+
+def parse_memory_update(message):
+    for pattern, _ in UPDATE_MEMORY_PATTERNS:
+        match = pattern.search(message)
+        if match:
+            key = clean_memory_key(match.group("key"))
+            value = match.group("value").strip(" .")
+            return key, value
+    return None
+
+
+def parse_memory_delete_key(message):
+    for pattern, _ in DELETE_MEMORY_PATTERNS:
+        match = pattern.search(message)
+        if match:
+            return clean_memory_key(match.group("key"))
+    return ""
+
+
+def clean_memory_key(key):
+    cleaned = re.split(r"\s+(?:is|to|=)\s+", key, maxsplit=1, flags=re.I)[0]
+    cleaned = re.sub(r"\b(?:you|your|my|is|to|about|from|memory)\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    cleaned = cleaned.replace("colour", "color")
+    if cleaned.startswith(("favorite ", "favourite ")):
+        return cleaned.split(" ", 1)[1]
+    return cleaned
+
+
+def find_memory_by_key(user, key):
+    memory = Memory.objects.filter(user=user, key=key).first()
+    if memory:
+        return memory
+
+    compact_key = key.replace("_", " ")
+    for memory in Memory.objects.filter(user=user):
+        memory_key = memory.key.replace("_", " ")
+        if memory_key == compact_key or memory_key.endswith(f" {compact_key}") or compact_key.endswith(f" {memory_key}"):
+            return memory
+
+    return Memory.objects.filter(user=user, key__icontains=key).first()
+
+
+def memory_list(user):
+    return [serialize_memory(memory) for memory in Memory.objects.filter(user=user)]
+
+
+def build_memory_sync(user, action, message, status="success"):
+    return {
+        "action": action,
+        "status": status,
+        "updated_memory_list": memory_list(user),
+        "message": message,
+    }
+
+
+def local_memory_action_response(title, memory_sync):
+    message = memory_sync["message"] if memory_sync else "Memory action completed"
+    return f"## {title}\n\n{message}"
 
 
 def enforce_memory_limit(user):
@@ -304,12 +433,16 @@ def memory_context(user, message=""):
 def serialize_memory(memory):
     return {
         "id": memory.id,
+        "memory_id": str(memory.id),
         "key": memory.key,
         "value": memory.value,
         "importance": memory.importance,
         "created_at": memory.created_at.isoformat() if memory.created_at else None,
+        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
     }
 
 
 def normalize_key(key):
-    return re.sub(r"\s+", "_", key.strip().lower())[:80]
+    normalized = key.strip().lower().replace("colour", "color")
+    normalized = re.sub(r"\bfavou?rite\s+", "", normalized)
+    return re.sub(r"\s+", "_", normalized)[:80]

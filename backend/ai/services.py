@@ -88,7 +88,7 @@ def _auto_response(messages):
         except ProviderAPIException as exc:
             reason = str(exc.detail)
             logger.warning("OpenRouter failed during auto provider request: %s", reason)
-            if not _should_fallback_from_openrouter(exc):
+            if not settings.GEMINI_API_KEY and not _should_fallback_from_openrouter(exc):
                 _set_provider_status("openrouter", False, reason)
                 raise
             _set_provider_status("gemini", True, reason)

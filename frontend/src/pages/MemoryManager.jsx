@@ -7,7 +7,7 @@ import { nlpApi } from "../services/api.js";
 
 const emptyForm = { key: "", value: "", importance: 3 };
 
-function MemoryManager() {
+function MemoryManager({ memorySync }) {
   const [memories, setMemories] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(true);
@@ -24,6 +24,23 @@ function MemoryManager() {
   };
 
   useEffect(loadMemories, []);
+
+  useEffect(() => {
+    if (!memorySync?.updated_memory_list) return;
+    setMemories(memorySync.updated_memory_list);
+    setLoading(false);
+  }, [memorySync]);
+
+  useEffect(() => {
+    const syncMemories = (event) => {
+      if (!event.detail?.updated_memory_list) return;
+      setMemories(event.detail.updated_memory_list);
+      setLoading(false);
+    };
+
+    window.addEventListener("memory:sync", syncMemories);
+    return () => window.removeEventListener("memory:sync", syncMemories);
+  }, []);
 
   const createMemory = async (event) => {
     event.preventDefault();

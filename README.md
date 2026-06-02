@@ -42,7 +42,7 @@ Add at least one AI provider key in `backend/.env`:
 - `GEMINI_API_KEY` for direct Gemini
 - `TAVILY_API_KEY` for live web search and latest/current information
 
-If `AI_PROVIDER=auto`, the backend tries OpenRouter first when configured, then Gemini.
+If `AI_PROVIDER=auto`, the backend tries OpenRouter first when configured, then falls back to Gemini when Gemini is configured and OpenRouter cannot complete the request.
 
 ## Frontend Setup
 
@@ -374,9 +374,9 @@ The `check_nlp_deps` command prints a warning when SpaCy or `en_core_web_sm` is 
 
 ## AI Provider Fallback
 
-When `AI_PROVIDER=auto`, the backend tries OpenRouter first when configured. If OpenRouter fails because of a connection problem, timeout, or `5xx` provider response, the request falls back to Gemini and logs the OpenRouter failure reason.
+When `AI_PROVIDER=auto`, the backend tries OpenRouter first when configured. If OpenRouter fails and `GEMINI_API_KEY` is configured, the request falls back to Gemini and logs the OpenRouter failure reason.
 
-OpenRouter `4xx` errors do not fall back. Bad API keys, forbidden models, or malformed requests surface immediately so configuration problems are visible.
+This includes provider-side auth, quota, timeout, connection, and `5xx` failures. If Gemini is not configured, OpenRouter errors surface immediately so configuration problems remain visible.
 
 Check the last provider decision:
 
@@ -385,6 +385,53 @@ GET /api/ai/provider-status/
 ```
 
 The response includes the configured provider, active provider, and whether fallback occurred in the last request.
+
+## Live Memory Sync
+
+Chat memory actions are handled locally by Django and immediately reflected in the database and Memory Manager UI.
+
+Supported chat actions:
+
+- Save: `save my favourite movie name is jersy`, `remember my favorite color is blue`, `my hobby is watch a movie`
+- Update: `update my favorite color to red`, `now my hobby is reading`
+- Delete: `remove my color`, `delete my memory my favourite colour is blue`, `forget my hobby`
+- Retrieve: `show my memories`, `what do you remember`
+
+Every memory action returns a `memory_sync` payload from `POST /api/ai/chat/`:
+
+```json
+{
+  "action": "save",
+  "status": "success",
+  "updated_memory_list": [
+    {
+      "memory_id": "1",
+      "key": "movie_name",
+      "value": "jersy"
+    }
+  ],
+  "message": "Memory saved successfully"
+}
+```
+
+The frontend listens for this payload and refreshes `MemoryManager.jsx` from the returned live database state. Duplicate overlapping save patterns are deduplicated by normalized key before the response is rendered.
+
+## Chat Scroll Persistence
+
+The chat view preserves scroll position across workspace navigation and component remounts.
+
+Browser storage keys:
+
+- `chat_scroll_position`
+- `chat_last_message_id`
+
+Restore priority:
+
+1. `chat_last_message_id`
+2. `chat_scroll_position`
+3. Default top position if no saved state exists
+
+When the user sends a new message, auto-scroll to the latest message overrides the saved position. When the user is reading older messages and switches to Memory, NLP, Resume, Docs, profile, or another workspace, returning to Chat restores the same viewed message or scroll offset.
 
 ## Response Cache Expiry
 
@@ -563,7 +610,7 @@ This is the full OPTIMUS workflow from local startup to authenticated chat and a
     - Django saves the user message in PostgreSQL.
 
 12. **Local response and cache checks**
-    - Django checks fast local handlers for FAQ, greetings, profile, memory save, and memory retrieval.
+    - Django checks fast local handlers for FAQ, greetings, profile, memory save, memory update, memory delete, and memory retrieval.
     - Django checks `ResponseCache` for eligible non-live responses.
     - If a local or cached answer is found, Django saves and returns it immediately.
 
@@ -575,7 +622,7 @@ This is the full OPTIMUS workflow from local startup to authenticated chat and a
 14. **AI provider flow**
     - Django builds the OPTIMUS system prompt with user profile, memories, NLP metadata, and recent conversation history.
     - Django sends the prompt to OpenRouter or Gemini based on `AI_PROVIDER`.
-    - If `AI_PROVIDER=auto`, OpenRouter is tried first when configured, then Gemini is used as fallback for eligible provider failures.
+    - If `AI_PROVIDER=auto`, OpenRouter is tried first when configured, then Gemini is used as fallback when Gemini is configured and OpenRouter cannot complete the request.
 
 15. **Response storage and display**
     - Django saves the assistant response as an `ai_message` row.
@@ -623,7 +670,7 @@ Below is the step-by-step journey of a chat message through the OPTIMUS chatbot 
    - The message is analyzed by `process_message()` in `backend/ai/nlp.py`.
    - **Entity Extraction**: Scans the text using SpaCy (with regex fallback) to identify names, dates, places, and organizations.
    - **Sentiment Analysis**: Uses TextBlob to determine message polarity (`positive`, `neutral`, `negative`) and calculate a score from `-1.0` to `1.0`.
-   - **Intent Detection**: Analyzes query structure to map the message to a specific intent: `faq`, `greeting`, `profile`, `save_memory`, `retrieve_memory`, `resume_analysis`, `web_search`, or `general_chat`.
+   - **Intent Detection**: Analyzes query structure to map the message to a specific intent: `faq`, `greeting`, `profile`, `save_memory`, `update_memory`, `delete_memory`, `retrieve_memory`, `resume_analysis`, `web_search`, or `general_chat`.
 
 4. **Database Record Creation**:
    - If `conversation_id` is provided, Django retrieves the conversation. If not, a new `Conversation` record is created (titling it with the first 80 characters of the message).
@@ -635,7 +682,7 @@ Below is the step-by-step journey of a chat message through the OPTIMUS chatbot 
      - **FAQ**: Predefined answers (such as creator queries: *"This AI system was built by Sridhar"*) are returned immediately.
      - **Greeting/Politeness**: A personalized welcome or goodbye is formulated using the user's name or display name.
      - **Profile**: Account information is serialized and formatted as Markdown.
-     - **Memory Actions**: Detects patterns like *"remember that my favorite language is Python"* to create a new `Memory` model entry in the database. Or lists all saved memories if requested.
+     - **Memory Actions**: Detects patterns like *"remember that my favorite language is Python"* to create or update a `Memory` model entry in the database. It also supports memory updates, deletes, and memory retrieval. Each memory write returns a live `memory_sync.updated_memory_list` payload so the Memory Manager UI reflects the database immediately.
    - If any local response is found, the reply is saved, `NLPEvent` is updated (`handled_locally=True`), and the response is immediately returned.
 
 6. **Cache Verification**:
@@ -662,7 +709,7 @@ Below is the step-by-step journey of a chat message through the OPTIMUS chatbot 
     - The response is saved to the database as a `Message` with `role="assistant"`.
     - The `NLPEvent` record is updated (`ai_called=True`).
     - The backend returns the serialized conversation structure, the new message, and NLP analytics payload back to React.
-    - React updates the chat interface state and renders the Markdown response.
+    - React updates the chat interface state, applies any `memory_sync` Memory Manager refresh, preserves chat scroll position across workspace navigation, and renders the Markdown response.
 
 ### Resume PDF Analysis Workflow (Step-by-Step)
 
@@ -1085,3 +1132,5 @@ Do not call Django directly with HTTPS unless Django is configured with HTTPS se
 The backend exposes auth and chat endpoints through Django REST Framework. Register and login both require OTP email verification before JWT tokens are returned. Authenticated chat requests are saved as `Message` rows linked to a user-owned `Conversation`. The AI service sends recent conversation context to OpenRouter or Gemini, then stores the assistant response.
 
 The frontend has login/register screens, an OTP verification step, and a chat page. Axios attaches the JWT bearer token and attempts token refresh when the access token expires.
+
+The chat page stores its last scroll position and first visible message in `sessionStorage`, then restores them when the user returns to Chat. Sending a new message still scrolls to the latest reply.

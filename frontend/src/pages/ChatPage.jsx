@@ -9,6 +9,9 @@ import NLPAnalytics from "./NLPAnalytics.jsx";
 import ResumeAnalyzer from "./ResumeAnalyzer.jsx";
 import { authApi, chatApi } from "../services/api.js";
 
+const CHAT_SCROLL_POSITION_KEY = "chat_scroll_position";
+const CHAT_LAST_MESSAGE_ID_KEY = "chat_last_message_id";
+
 const formatProfileError = (data) => {
   if (!data) {
     return "Could not save your profile.";
@@ -30,6 +33,29 @@ const formatProfileError = (data) => {
     .filter(Boolean);
 
   return fieldErrors.length ? fieldErrors.join(" ") : "Could not save your profile.";
+};
+
+const formatChatError = (error) => {
+  const data = error.response?.data;
+  const detail = data?.detail || data?.message || data?.error;
+
+  if (Array.isArray(detail)) {
+    return detail.join(" ");
+  }
+
+  if (detail) {
+    return typeof detail === "string" ? detail : JSON.stringify(detail);
+  }
+
+  if (error.response?.status) {
+    return `Request failed with status ${error.response.status}.`;
+  }
+
+  if (error.request) {
+    return "Could not reach the backend server. Make sure Django is running and refresh the page.";
+  }
+
+  return error.message || "The AI request failed.";
 };
 
 const formatConversationTime = (value) => {
@@ -63,6 +89,11 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
   const [profileError, setProfileError] = useState("");
   const [workspace, setWorkspace] = useState("chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [memorySync, setMemorySync] = useState(null);
+  const chatScrollRef = useRef(null);
+  const messageRefs = useRef({});
+  const shouldAutoScrollRef = useRef(false);
+  const restoredConversationRef = useRef(null);
   const bottomRef = useRef(null);
 
   const activeConversation = useMemo(
@@ -106,8 +137,36 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeConversation?.messages, loading]);
+    if (workspace !== "chat") {
+      saveChatScrollState();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      if (shouldAutoScrollRef.current) {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        shouldAutoScrollRef.current = false;
+        saveChatScrollState();
+        return;
+      }
+
+      const restoreKey = activeId || "draft";
+      if (restoredConversationRef.current === restoreKey) return;
+
+      restoreChatScrollState();
+      restoredConversationRef.current = restoreKey;
+    });
+  }, [activeId, activeConversation?.messages, loading, workspace]);
+
+  useEffect(() => {
+    const saveBeforeLeave = () => saveChatScrollState();
+
+    window.addEventListener("beforeunload", saveBeforeLeave);
+    return () => {
+      saveBeforeLeave();
+      window.removeEventListener("beforeunload", saveBeforeLeave);
+    };
+  }, []);
 
   useEffect(() => {
     setProfileForm({
@@ -118,11 +177,16 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
   }, [user]);
 
   const startNewChat = () => {
+    saveChatScrollState();
+    shouldAutoScrollRef.current = true;
+    restoredConversationRef.current = null;
     setActiveId(null);
     setError("");
   };
 
   const selectConversation = (conversationId) => {
+    saveChatScrollState();
+    restoredConversationRef.current = null;
     setActiveId(conversationId);
     setError("");
     setSidebarOpen(false);
@@ -155,6 +219,7 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
 
+    shouldAutoScrollRef.current = true;
     const optimisticConversation = activeConversation || {
       id: "draft",
       title: trimmed.slice(0, 80),
@@ -190,11 +255,13 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
         const next = withoutDraft.filter((conversation) => conversation.id !== data.conversation.id);
         return [data.conversation, ...next];
       });
+      if (data.memory_sync) {
+        setMemorySync(data.memory_sync);
+        window.dispatchEvent(new CustomEvent("memory:sync", { detail: data.memory_sync }));
+      }
       setActiveId(data.conversation.id);
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      const message = Array.isArray(detail) ? detail.join(" ") : detail;
-      setError(message || "The AI request failed. Check your API key and backend logs.");
+      setError(formatChatError(err));
     } finally {
       setLoading(false);
     }
@@ -246,8 +313,67 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
   const canOpenAdmin = ["super_admin", "admin", "moderator"].includes(user.role);
 
   const selectWorkspace = (workspaceId) => {
+    if (workspace === "chat" && workspaceId !== "chat") {
+      saveChatScrollState();
+    }
+    if (workspaceId === "chat") {
+      restoredConversationRef.current = null;
+    }
     setWorkspace(workspaceId);
     setSidebarOpen(false);
+  };
+
+  const getStoredChatPosition = () => {
+    const raw = window.sessionStorage.getItem(CHAT_SCROLL_POSITION_KEY);
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const getFirstVisibleMessageId = () => {
+    const container = chatScrollRef.current;
+    if (!container) return "";
+
+    const containerTop = container.getBoundingClientRect().top;
+    const visibleMessage = messages.find((message) => {
+      const node = messageRefs.current[String(message.id)];
+      if (!node) return false;
+      return node.getBoundingClientRect().bottom >= containerTop + 8;
+    });
+
+    return visibleMessage?.id ? String(visibleMessage.id) : "";
+  };
+
+  const saveChatScrollState = () => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+
+    window.sessionStorage.setItem(CHAT_SCROLL_POSITION_KEY, String(container.scrollTop));
+    const lastMessageId = getFirstVisibleMessageId();
+    if (lastMessageId) {
+      window.sessionStorage.setItem(CHAT_LAST_MESSAGE_ID_KEY, lastMessageId);
+    }
+  };
+
+  const restoreChatScrollState = () => {
+    const container = chatScrollRef.current;
+    if (!container || messages.length === 0) return;
+
+    const storedMessageId = window.sessionStorage.getItem(CHAT_LAST_MESSAGE_ID_KEY);
+    const messageNode = storedMessageId ? messageRefs.current[storedMessageId] : null;
+
+    if (messageNode) {
+      messageNode.scrollIntoView({ block: "start" });
+      return;
+    }
+
+    const storedScrollTop = getStoredChatPosition();
+    if (storedScrollTop !== null) {
+      container.scrollTop = storedScrollTop;
+    }
+  };
+
+  const handleChatScroll = () => {
+    saveChatScrollState();
   };
 
   const welcomeTitle = authEvent === "register"
@@ -460,7 +586,7 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
 
         {workspace === "chat" ? (
           <>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 sm:py-6">
+            <div ref={chatScrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 sm:py-6">
               <div className="mx-auto max-w-3xl space-y-4">
                 {messages.length === 0 && (
                   <div className="rounded-lg border border-white/15 bg-white/[0.08] p-5 shadow-2xl shadow-cyan-950/25 backdrop-blur-2xl sm:p-8">
@@ -496,7 +622,19 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
                 )}
 
                 {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
+                  <div
+                    key={message.id}
+                    ref={(node) => {
+                      if (node) {
+                        messageRefs.current[String(message.id)] = node;
+                      } else {
+                        delete messageRefs.current[String(message.id)];
+                      }
+                    }}
+                    data-message-id={message.id}
+                  >
+                    <MessageBubble message={message} />
+                  </div>
                 ))}
 
                 {loading && <MessageBubble message={{ role: "assistant", content: "Thinking..." }} isLoading />}
@@ -529,12 +667,14 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
             </form>
           </>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto pb-20 md:pb-0">
-            {workspace === "memories" && <MemoryManager />}
-            {workspace === "analytics" && <NLPAnalytics />}
-            {workspace === "resume" && <ResumeAnalyzer />}
-            {workspace === "documents" && <DocumentsPage />}
-            <div className="mx-auto max-w-5xl px-3 pb-5 sm:px-5">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-20 md:pb-0">
+            <div className="flex-1">
+              {workspace === "memories" && <MemoryManager memorySync={memorySync} />}
+              {workspace === "analytics" && <NLPAnalytics />}
+              {workspace === "resume" && <ResumeAnalyzer />}
+              {workspace === "documents" && <DocumentsPage />}
+            </div>
+            <div className="mx-auto w-full max-w-5xl px-3 pb-5 sm:px-5">
               <AppFooter />
             </div>
           </div>
