@@ -308,8 +308,8 @@ REST_FRAMEWORK = {
     ),
 }
 
-JWT_AUTH_COOKIE = "jarvis_access"
-JWT_REFRESH_COOKIE = "jarvis_refresh"
+JWT_AUTH_COOKIE = "optimus_access"
+JWT_REFRESH_COOKIE = "optimus_refresh"
 JWT_COOKIE_HTTPONLY = True
 JWT_COOKIE_SECURE = True
 JWT_COOKIE_SAMESITE = "Strict"
@@ -319,11 +319,11 @@ CORS_ALLOW_CREDENTIALS = True
 Auth responses set cookies after OTP verification:
 
 ```python
-response.set_cookie("jarvis_access", access, httponly=True, secure=True, samesite="Strict")
-response.set_cookie("jarvis_refresh", refresh, httponly=True, secure=True, samesite="Strict")
+response.set_cookie("optimus_access", access, httponly=True, secure=True, samesite="Strict")
+response.set_cookie("optimus_refresh", refresh, httponly=True, secure=True, samesite="Strict")
 ```
 
-The custom DRF auth class reads `jarvis_access` from cookies and can also authenticate bearer tokens. `/api/token/refresh/` reads `jarvis_refresh` from cookies or a submitted refresh token, rotates tokens, and sets fresh cookies. Logout blacklists the refresh token when available and clears both cookies.
+The custom DRF auth class reads `optimus_access` from cookies and can also authenticate bearer tokens. `/api/token/refresh/` reads `optimus_refresh` from cookies or a submitted refresh token, rotates tokens, and sets fresh cookies. Logout blacklists the refresh token when available and clears both cookies.
 
 Axios is configured to send cookies with API requests:
 
