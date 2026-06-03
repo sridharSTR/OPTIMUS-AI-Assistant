@@ -30,7 +30,7 @@ function ResumeAnalyzer() {
       setAnalyses((current) => [data, ...current]);
       setFile(null);
     } catch (err) {
-      setError(err.response?.data?.detail || "Could not analyze this resume.");
+      setError(formatUploadError(err, "Could not analyze this resume."));
     } finally {
       setLoading(false);
     }
@@ -125,6 +125,16 @@ function ResumeAnalyzer() {
       </div>
     </motion.section>
   );
+}
+
+function formatUploadError(error, fallback) {
+  const data = error.response?.data;
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  if (data.detail) return data.detail;
+  if (data.file) return Array.isArray(data.file) ? data.file.join(" ") : String(data.file);
+  const firstError = Object.values(data).flat?.()[0];
+  return firstError ? String(firstError) : fallback;
 }
 
 function InfoList({ title, items = [] }) {

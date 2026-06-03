@@ -34,7 +34,7 @@ const formatApiError = (error) => {
   return fieldErrors.length ? fieldErrors.join(" ") : "Something went wrong. Please check your details and try again.";
 };
 
-function AuthPage({ initialAccessRole = "user", initialMode = "login", onAuthSuccess, onAuthRouteChange }) {
+function AuthPage({ initialAccessRole = "user", initialMode = "login", onAuthSuccess, onRegistrationVerified, onAuthRouteChange }) {
   const [accessRole, setAccessRole] = useState(initialAccessRole);
   const [mode, setMode] = useState(initialMode);
   const [form, setForm] = useState(initialForm);
@@ -148,19 +148,24 @@ function AuthPage({ initialAccessRole = "user", initialMode = "login", onAuthSuc
           email: pendingEmail,
           otp: form.otp,
         });
-        if (isAdminAccess && !adminRoles.has(data.user?.role)) {
+        if (!isRegister && isAdminAccess && !adminRoles.has(data.user?.role)) {
           throw new Error("You are not an admin. Admin only access is allowed on this page. Please use User Login or ask the super admin to promote your account.");
         }
-        const eventType = isRegister ? "register" : "login";
+        if (isRegister || data.purpose === "register") {
+          const message = data.detail || "Registration Successful. Your account has been verified successfully.";
+          setSuccess({
+            title: "Registration Successful",
+            message,
+          });
+          window.setTimeout(() => onRegistrationVerified?.(data, accessRole), 850);
+          return;
+        }
+
         setSuccess({
-          title: isRegister
-            ? isAdminAccess ? "Admin Account Verified" : "Account Created Successfully"
-            : isAdminAccess ? "Admin Login Successful" : "Login Successful",
-          message: isRegister
-            ? `Welcome to OPTIMUS, ${data.user.display_name || data.user.username}. Your account has been verified successfully.`
-            : `Welcome back, ${data.user.display_name || data.user.username}. OPTIMUS is ready to assist you.`,
+          title: isAdminAccess ? "Admin Login Successful" : "Login Successful",
+          message: `Welcome back, ${data.user.display_name || data.user.username}. OPTIMUS is ready to assist you.`,
         });
-        window.setTimeout(() => onAuthSuccess(data, eventType), 850);
+        window.setTimeout(() => onAuthSuccess(data, "login"), 850);
         return;
       }
 

@@ -1,6 +1,8 @@
 from django.shortcuts import get_object_or_404
+from io import BytesIO
 from rest_framework import generics, status
 from rest_framework.exceptions import APIException
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +23,8 @@ class DocumentUploadView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             document = create_and_process_document(request.user, serializer.validated_data["file"])
+        except ValidationError:
+            raise
         except Exception as exc:
             raise APIException(f"Could not process document: {exc}") from exc
         return Response(DocumentSerializer(document, context={"request": request}).data, status=status.HTTP_201_CREATED)
@@ -82,8 +86,8 @@ class RAGResumeAnalysisView(APIView):
         document = get_object_or_404(Document, id=pk, user=request.user)
         if document.file_type != "pdf":
             raise APIException("Resume analysis currently supports PDF documents.")
-        with document.file.open("rb") as handle:
-            handle.name = document.filename
-            result = analyze_resume_file(handle)
+        handle = BytesIO(bytes(document.file_data))
+        handle.name = document.filename
+        result = analyze_resume_file(handle)
         analysis = ResumeAnalysis.objects.create(user=request.user, **result)
         return Response(ResumeAnalysisSerializer(analysis).data, status=status.HTTP_201_CREATED)

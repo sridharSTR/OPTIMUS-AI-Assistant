@@ -20,6 +20,7 @@ export default [
         window: "readonly",
         document: "readonly",
         Event: "readonly",
+        CustomEvent: "readonly",
         localStorage: "readonly",
       },
       parserOptions: {

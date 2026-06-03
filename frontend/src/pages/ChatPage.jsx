@@ -1,5 +1,5 @@
 import { Activity, Bot, Brain, Clock3, FileSearch, Files, LogOut, Menu, MessageSquarePlus, Save, Search, Send, Sparkles, Trash2, UserRound, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AppFooter from "../components/common/AppFooter.jsx";
 import MessageBubble from "../components/MessageBubble.jsx";
@@ -101,6 +101,11 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
     [activeId, conversations],
   );
 
+  const messages = useMemo(
+    () => activeConversation?.messages || [],
+    [activeConversation?.messages],
+  );
+
   const savedConversations = useMemo(
     () => conversations.filter((conversation) => conversation.id !== "draft"),
     [conversations],
@@ -125,6 +130,59 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
     () => visibleConversations.slice(0, 8),
     [visibleConversations],
   );
+
+  const getStoredChatPosition = useCallback(() => {
+    const raw = window.sessionStorage.getItem(CHAT_SCROLL_POSITION_KEY);
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  }, []);
+
+  const getFirstVisibleMessageId = useCallback(() => {
+    const container = chatScrollRef.current;
+    if (!container) return "";
+
+    const containerTop = container.getBoundingClientRect().top;
+    const visibleMessage = messages.find((message) => {
+      const node = messageRefs.current[String(message.id)];
+      if (!node) return false;
+      return node.getBoundingClientRect().bottom >= containerTop + 8;
+    });
+
+    return visibleMessage?.id ? String(visibleMessage.id) : "";
+  }, [messages]);
+
+  const saveChatScrollState = useCallback(() => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+
+    window.sessionStorage.setItem(CHAT_SCROLL_POSITION_KEY, String(container.scrollTop));
+    const lastMessageId = getFirstVisibleMessageId();
+    if (lastMessageId) {
+      window.sessionStorage.setItem(CHAT_LAST_MESSAGE_ID_KEY, lastMessageId);
+    }
+  }, [getFirstVisibleMessageId]);
+
+  const restoreChatScrollState = useCallback(() => {
+    const container = chatScrollRef.current;
+    if (!container || messages.length === 0) return;
+
+    const storedMessageId = window.sessionStorage.getItem(CHAT_LAST_MESSAGE_ID_KEY);
+    const messageNode = storedMessageId ? messageRefs.current[storedMessageId] : null;
+
+    if (messageNode) {
+      messageNode.scrollIntoView({ block: "start" });
+      return;
+    }
+
+    const storedScrollTop = getStoredChatPosition();
+    if (storedScrollTop !== null) {
+      container.scrollTop = storedScrollTop;
+    }
+  }, [getStoredChatPosition, messages.length]);
+
+  const handleChatScroll = useCallback(() => {
+    saveChatScrollState();
+  }, [saveChatScrollState]);
 
   useEffect(() => {
     chatApi
@@ -156,7 +214,7 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
       restoreChatScrollState();
       restoredConversationRef.current = restoreKey;
     });
-  }, [activeId, activeConversation?.messages, loading, workspace]);
+  }, [activeId, activeConversation?.messages, loading, restoreChatScrollState, saveChatScrollState, workspace]);
 
   useEffect(() => {
     const saveBeforeLeave = () => saveChatScrollState();
@@ -166,7 +224,7 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
       saveBeforeLeave();
       window.removeEventListener("beforeunload", saveBeforeLeave);
     };
-  }, []);
+  }, [saveChatScrollState]);
 
   useEffect(() => {
     setProfileForm({
@@ -302,7 +360,6 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
     }
   };
 
-  const messages = activeConversation?.messages || [];
   const workspaces = [
     { id: "chat", label: "Chat", icon: Bot },
     { id: "memories", label: "Memory", icon: Brain },
@@ -321,59 +378,6 @@ function ChatPage({ user, onLogout, onUserUpdate, authEvent, onNavigate }) {
     }
     setWorkspace(workspaceId);
     setSidebarOpen(false);
-  };
-
-  const getStoredChatPosition = () => {
-    const raw = window.sessionStorage.getItem(CHAT_SCROLL_POSITION_KEY);
-    const value = Number(raw);
-    return Number.isFinite(value) ? value : null;
-  };
-
-  const getFirstVisibleMessageId = () => {
-    const container = chatScrollRef.current;
-    if (!container) return "";
-
-    const containerTop = container.getBoundingClientRect().top;
-    const visibleMessage = messages.find((message) => {
-      const node = messageRefs.current[String(message.id)];
-      if (!node) return false;
-      return node.getBoundingClientRect().bottom >= containerTop + 8;
-    });
-
-    return visibleMessage?.id ? String(visibleMessage.id) : "";
-  };
-
-  const saveChatScrollState = () => {
-    const container = chatScrollRef.current;
-    if (!container) return;
-
-    window.sessionStorage.setItem(CHAT_SCROLL_POSITION_KEY, String(container.scrollTop));
-    const lastMessageId = getFirstVisibleMessageId();
-    if (lastMessageId) {
-      window.sessionStorage.setItem(CHAT_LAST_MESSAGE_ID_KEY, lastMessageId);
-    }
-  };
-
-  const restoreChatScrollState = () => {
-    const container = chatScrollRef.current;
-    if (!container || messages.length === 0) return;
-
-    const storedMessageId = window.sessionStorage.getItem(CHAT_LAST_MESSAGE_ID_KEY);
-    const messageNode = storedMessageId ? messageRefs.current[storedMessageId] : null;
-
-    if (messageNode) {
-      messageNode.scrollIntoView({ block: "start" });
-      return;
-    }
-
-    const storedScrollTop = getStoredChatPosition();
-    if (storedScrollTop !== null) {
-      container.scrollTop = storedScrollTop;
-    }
-  };
-
-  const handleChatScroll = () => {
-    saveChatScrollState();
   };
 
   const welcomeTitle = authEvent === "register"

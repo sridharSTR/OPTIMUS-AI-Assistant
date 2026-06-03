@@ -47,7 +47,7 @@ class RAGAPITests(APITestCase):
         document = Document.objects.create(
             user=self.user,
             filename="notes.txt",
-            file="documents/notes.txt",
+            file_data=b"Python skills include Django.",
             file_type="txt",
             file_size=10,
             processed=True,

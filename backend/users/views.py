@@ -2,8 +2,6 @@ from django.conf import settings
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from .cookies import clear_auth_cookies, set_auth_cookies
 from .serializers import LoginSerializer, RegisterSerializer, UserSerializer, VerifyOTPSerializer
@@ -48,9 +46,27 @@ class VerifyOTPView(APIView):
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = dict(serializer.validated_data)
+        if data.get("purpose") == "register":
+            return Response(
+                {
+                    "user": data["user"],
+                    "purpose": data["purpose"],
+                    "registration_verified": True,
+                    "detail": data["detail"],
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         access = data["access"]
         refresh = data["refresh"]
-        response = Response(data, status=status.HTTP_201_CREATED)
+        response = Response(
+            {
+                "user": data["user"],
+                "purpose": data["purpose"],
+                "detail": "Authentication successful.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
         return set_auth_cookies(response, access, refresh)
 
 
@@ -67,18 +83,10 @@ class LoginView(APIView):
 
 
 class LogoutView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
     def post(self, request):
-        refresh_token = request.COOKIES.get(settings.JWT_REFRESH_COOKIE) or request.data.get("refresh")
-        if not refresh_token:
-            response = Response(status=status.HTTP_204_NO_CONTENT)
-            return clear_auth_cookies(response)
-
-        try:
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-        except TokenError:
-            pass
-
         response = Response(status=status.HTTP_204_NO_CONTENT)
         return clear_auth_cookies(response)
 

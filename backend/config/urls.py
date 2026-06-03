@@ -1,6 +1,4 @@
 from django.contrib import admin
-from django.conf import settings
-from django.conf.urls.static import static
 from django.urls import include, path
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -42,4 +40,4 @@ urlpatterns = [
     path("api/ai/", include("ai.urls")),
     path("api/rag/", include("ai.rag_urls")),
     path("api/token/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]

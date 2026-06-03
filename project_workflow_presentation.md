@@ -1,142 +1,281 @@
-# OPTIMUS FULL Chatbot Workflow Presentation
+---
+marp: true
+title: OPTIMUS Project Workflow
+description: Full-stack AI chatbot architecture and workflow presentation
+theme: default
+paginate: true
+---
 
-````carousel
-# OPTIMUS FULL Full-Stack AI Chat
-### Architectural & Workflow Presentation Slide Deck
-*Created by Sridhar*
+# OPTIMUS Full-Stack AI Chat
+
+## Project Workflow Presentation
+
+Created by Sridhar M
+
+OPTIMUS is a secure AI assistant built with React, Django REST Framework, PostgreSQL, OTP email verification, JWT cookie authentication, NLP, RAG documents, resume analysis, Tavily search, and OpenRouter/Gemini AI providers.
 
 ---
 
-> [!NOTE]
-> OPTIMUS FULL is a modern, responsive, and secure full-stack AI Assistant utilizing React, Django REST Framework, JWT & OTP email authentication, TextBlob/SpaCy NLP, Tavily search, and Gemini/OpenRouter LLMs.
+# Key Capabilities
 
-<!-- slide -->
+- Secure registration and login with email OTP.
+- Registration OTP verifies the account but does not log the user in.
+- Login OTP is the only step that creates JWT cookies.
+- Persistent conversations, user memories, NLP analytics, and response cache.
+- Live web search through Tavily for current/latest queries.
+- Resume analysis and document RAG chat.
+- Admin dashboard with role-based access control.
 
-## OPTIMUS FULL Key Capabilities
+---
 
-- **Secure Verification**: Dual-step registration and login with OTP sent via SMTP email (Gmail).
-- **NLP & Local Rules**: Fast response routing for FAQs, greetings, and user profile queries.
-- **Persistent Memories**: User-specific memory storage using word-overlap relevance scoring.
-- **Live Search**: Tavily live search integration for real-time web querying.
-- **Resume Analyzer**: PDF extraction using PyPDF2, skill scoring, and dynamic interview questions.
+# Technology Stack
 
-<!-- slide -->
+| Layer | Technologies |
+| --- | --- |
+| Frontend | React, Vite, Axios, CSS |
+| Backend | Django, Django REST Framework |
+| Database | PostgreSQL through Django ORM |
+| Auth | Email OTP, SimpleJWT, httpOnly cookies |
+| NLP | SpaCy, TextBlob, regex fallback |
+| AI | OpenRouter, Google Gemini |
+| Search | Tavily |
+| Documents | PDF, DOCX, TXT extraction and chunking |
 
-## System Architecture & Tech Stack
+---
 
-| Layer | Technologies & Components |
-|---|---|
-| **Frontend** | React, Vite, Axios, Tailwind CSS / Vanilla CSS |
-| **Backend** | Django REST Framework (DRF), SQLite/PostgreSQL |
-| **Security** | JWT Tokens (Access/Refresh), SMTP OTP verification |
-| **NLP Pipeline** | TextBlob (Sentiment), SpaCy / Regex (Entity extraction) |
-| **External APIs** | Tavily Web Search, OpenRouter, Google Gemini API |
-
-<!-- slide -->
-
-## Request-Response Lifecycle Flow
-```mermaid
-flowchart TD
-    User([User Prompt]) --> Frontend[React UI]
-    Frontend --> Auth{Is Auth & Verified?}
-    Auth -->|No| Login[OTP Login / Register]
-    Auth -->|Yes| Backend[Django REST API]
-    Backend --> NLP[NLP: Sentiment & Intent]
-    NLP --> LocalCheck{Is Greeting, FAQ or Memory?}
-    LocalCheck -->|Yes| DBLocal[Local Response]
-    LocalCheck -->|No| CacheCheck{In Response Cache?}
-    CacheCheck -->|Yes| DBCache[Cached Response]
-    CacheCheck -->|No| History[Load 12 recent Messages]
-    History --> SearchCheck{Needs Live Search?}
-    SearchCheck -->|Yes| Tavily[Tavily Search API]
-    SearchCheck -->|No| AI[Assemble Prompt Context]
-    Tavily --> AI
-    AI --> LLM[OpenRouter / Gemini API]
-    LLM --> CacheSave[Save response to Cache & Message DB]
-    CacheSave --> SendBack[Return Response JSON]
-    SendBack --> Frontend
-    DBLocal --> SendBack
-    DBCache --> SendBack
-```
-
-<!-- slide -->
-
-## User Security & OTP Flow
-
-```mermaid
-sequenceDiagram
-    participant User as User
-    participant React as React Frontend
-    participant Django as Django Backend
-    participant SMTP as SMTP (Gmail)
-    
-    User->>React: Submit register or login credentials
-    React->>Django: POST /api/users/[register|login]/
-    Django->>Django: Validate details & generate OTP
-    Django->>SMTP: Send OTP code
-    SMTP-->>User: Deliver OTP email
-    Django-->>React: requires_otp=true
-    User->>React: Input OTP code
-    React->>Django: POST /api/users/verify-otp/
-    Django->>Django: Validate code and activate user
-    Django-->>React: Return JWT access/refresh tokens
-```
-
-<!-- slide -->
-
-## NLP & User Memories
-
-> [!TIP]
-> Memory is parsed in real-time using patterns like `remember that X is Y` or `my favorite X is Y`.
-
-1. **Entity Extraction**: Uses SpaCy to extract entities (Names, places, dates).
-2. **Sentiment Analysis**: TextBlob parses sentiment to adjust OPTIMUS FULL's empathy level.
-3. **Word Overlap Scoring**: Finds relevant memories matching keywords in user prompts.
-4. **Context Construction**: Assembles system instructions, user profile, memory context, NLP stats, and the last 12 chat messages before calling the LLM.
-
-<!-- slide -->
-
-## Live Search Integration
-
-- **Trigger terms**: `latest`, `current`, `today`, `news`, `weather`, `stock`, `crypto`, etc.
-- **Search flow**:
-  1. Detects time-sensitive intent in NLP check.
-  2. Makes synchronous search call to Tavily REST API.
-  3. Contextualizes LLM prompt with latest web search data.
-  4. Delivers contextually accurate, real-time answers.
-
-<!-- slide -->
-
-## Resume PDF Analyzer
+# Local Development Flow
 
 ```mermaid
 flowchart LR
-    PDF[Resume PDF] --> Extract[PyPDF2 Text Extraction]
-    Extract --> Match[Skill Matching & Section Analysis]
-    Match --> Calc[Calculate Score out of 100]
-    Calc --> Tips[Generate Suggestions & Questions]
-    Tips --> Report[Render Interactive Resume Report]
+    Dev[Developer] --> Backend[Django backend]
+    Dev --> Frontend[Vite React frontend]
+    Frontend -->|/api proxy| Backend
+    Backend --> DB[(PostgreSQL)]
+    Backend --> SMTP[Gmail SMTP]
+    Backend --> AI[OpenRouter or Gemini]
+    Backend --> Search[Tavily]
 ```
-- **Education/Projects/Experience parsing**: Scans headers & extracts next 6 lines.
-- **Tailored Interview Preparation**: Synthesizes custom behavioral and technical interview questions based on detected skills.
 
-<!-- slide -->
+Backend runs at `http://127.0.0.1:8000`.
 
-## Running OPTIMUS FULL Locally
+Frontend runs at `http://localhost:5174` or `https://localhost:5174`.
+
+---
+
+# Required Auth Flow
+
+```mermaid
+flowchart TD
+    A[Register] --> B[Registration OTP Verify]
+    B --> C[Account verified]
+    C --> D[Redirect to Login]
+    D --> E[Login with email and password]
+    E --> F[Login OTP Verify]
+    F --> G[JWT cookies created]
+    G --> H[Dashboard /chat]
+```
+
+Registration verification never creates a login session.
+
+JWT tokens are issued only after successful login OTP verification.
+
+---
+
+# Registration Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant React
+    participant Django
+    participant DB as PostgreSQL
+    participant SMTP as Email SMTP
+
+    User->>React: Fill registration form
+    React->>Django: POST /api/users/register/
+    Django->>DB: Create user email_verified=false, is_active=false
+    Django->>DB: Save hashed register OTP
+    Django->>SMTP: Send registration OTP to user.email
+    Django-->>React: requires_otp=true
+    User->>React: Enter OTP
+    React->>Django: POST /api/users/verify-otp/
+    Django->>DB: Set email_verified=true and is_active=true
+    Django-->>React: Registration successful, no JWT tokens
+    React-->>User: Show success toast
+    React->>React: Redirect to Login page
+```
+
+---
+
+# Login Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant React
+    participant Django
+    participant DB as PostgreSQL
+    participant SMTP as Email SMTP
+
+    User->>React: Enter email and password
+    React->>Django: POST /api/users/login/
+    Django->>DB: Validate user and password
+    Django->>DB: Save hashed login OTP
+    Django->>SMTP: Send login OTP to user.email
+    Django-->>React: requires_otp=true
+    User->>React: Enter OTP
+    React->>Django: POST /api/users/verify-otp/
+    Django->>DB: Verify login OTP
+    Django-->>React: Set JWT cookies and return user data
+    React->>React: Redirect to /chat
+```
+
+---
+
+# Admin Registration Flow
+
+```mermaid
+flowchart TD
+    A[Admin Register] --> B[Create normal pending user]
+    B --> C[Create AdminRegistrationRequest]
+    C --> D[Send registration OTP]
+    D --> E[Verify OTP]
+    E --> F[Account active and email verified]
+    F --> G[Redirect to admin login]
+    G --> H{Admin approved?}
+    H -->|No| I[Admin login blocked]
+    H -->|Yes| J[Admin login OTP]
+    J --> K[Admin dashboard]
+```
+
+Admin registration does not grant admin access automatically.
+
+An existing admin or super admin must approve the request.
+
+---
+
+# Chat Request Lifecycle
+
+```mermaid
+flowchart TD
+    A[User sends message] --> B[Django ChatView]
+    B --> C[Authenticate JWT cookie]
+    C --> D[Check email_verified]
+    D --> E[Run NLP intent and sentiment]
+    E --> F{Local handler?}
+    F -->|Yes| G[FAQ, memory, profile, greeting]
+    F -->|No| H{Cached response?}
+    H -->|Yes| I[Return cached response]
+    H -->|No| J{Needs live data?}
+    J -->|Yes| K[Tavily search]
+    J -->|No| L[Build AI prompt]
+    K --> L
+    L --> M[OpenRouter or Gemini]
+    M --> N[Save response]
+    G --> N
+    I --> N
+    N --> O[React renders Markdown]
+```
+
+---
+
+# Memory and NLP Flow
+
+- User messages are analyzed for intent, sentiment, and entities.
+- Memory commands can save, update, delete, and retrieve user memories.
+- Memory changes are written to PostgreSQL immediately.
+- The frontend receives `memory_sync` so the Memory page stays current.
+- Relevant memories are injected into the AI prompt for personalization.
+
+---
+
+# Document RAG Flow
+
+```mermaid
+flowchart LR
+    A[Upload PDF, DOCX, or TXT] --> B[Store file bytes in PostgreSQL]
+    B --> C[Extract text]
+    C --> D[Create document chunks]
+    D --> E[Ask document question]
+    E --> F[Retrieve relevant chunks]
+    F --> G[Build grounded prompt]
+    G --> H[AI answer with sources]
+```
+
+Uploaded document content is stored in the database and used for document chat.
+
+---
+
+# Resume Analysis Flow
+
+```mermaid
+flowchart LR
+    A[Upload resume PDF] --> B[Extract text]
+    B --> C[OCR fallback if needed]
+    C --> D[Detect skills and sections]
+    D --> E[Score resume]
+    E --> F[Generate suggestions]
+    F --> G[Generate interview questions]
+    G --> H[Store analysis in PostgreSQL]
+```
+
+---
+
+# Run OPTIMUS Locally
+
+Backend:
 
 ```bash
-# 1. Run Django Backend
 cd backend
-python -m venv venv && source venv/bin/activate
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py runserver
+```
 
-# 2. Run React Frontend
+Frontend:
+
+```bash
 cd frontend
 npm install
 npm run dev
 ```
-> [!IMPORTANT]
-> Ensure all API keys (`TAVILY_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) and Gmail SMTP parameters are configured in the `backend/.env` file.
-````
+
+---
+
+# Verification Checklist
+
+Backend:
+
+```bash
+cd backend
+python manage.py check
+python manage.py test users
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm run lint
+npm run build
+```
+
+---
+
+# Final Workflow Summary
+
+Register
+
+OTP Verify
+
+Registration Successful
+
+Redirect to Login
+
+Login
+
+OTP Verify
+
+Dashboard `/chat`

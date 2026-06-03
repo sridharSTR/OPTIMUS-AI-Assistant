@@ -9,6 +9,7 @@ import { authApi, clearStoredTokens, getStoredAuthUser, storeAuthSession, storeA
 
 const adminRoles = new Set(["super_admin", "admin", "moderator"]);
 const defaultSignedInPath = (nextUser) => (adminRoles.has(nextUser?.role) ? "/admin" : "/chat");
+const authRoutes = new Set(["/login", "/register", "/admin/login", "/admin/register"]);
 const authPath = (accessRole, mode) => {
   if (accessRole === "admin") {
     return mode === "register" ? "/admin/register" : "/admin/login";
@@ -54,9 +55,13 @@ function App() {
     if (storedUser) {
       setUser(storedUser);
     }
+    if (!storedUser && authRoutes.has(window.location.pathname)) {
+      setCheckingAuth(false);
+      return;
+    }
 
     authApi
-      .me({ skipAuthRefresh: !storedUser })
+      .me()
       .then(({ data }) => {
         storeAuthUser(data);
         setUser(data);
@@ -115,6 +120,19 @@ function App() {
     });
   };
 
+  const handleRegistrationVerified = (_authPayload, accessRole = "user") => {
+    clearStoredTokens();
+    setUser(null);
+    setAuthEvent(null);
+    setToast({
+      title: "Registration Successful",
+      message: "Registration Successful. Your account has been verified successfully.",
+    });
+    window.setTimeout(() => {
+      navigate(authPath(accessRole, "login"));
+    }, 900);
+  };
+
   const handleUserUpdate = (nextUser) => {
     storeAuthUser(nextUser);
     setUser(nextUser);
@@ -152,6 +170,7 @@ function App() {
                 initialAccessRole="user"
                 initialMode="login"
                 onAuthSuccess={handleAuthSuccess}
+                onRegistrationVerified={handleRegistrationVerified}
                 onAuthRouteChange={(nextAccessRole, nextMode) => navigate(authPath(nextAccessRole, nextMode))}
               />
             </AuthRoute>
@@ -165,6 +184,7 @@ function App() {
                 initialAccessRole="user"
                 initialMode="register"
                 onAuthSuccess={handleAuthSuccess}
+                onRegistrationVerified={handleRegistrationVerified}
                 onAuthRouteChange={(nextAccessRole, nextMode) => navigate(authPath(nextAccessRole, nextMode))}
               />
             </AuthRoute>
@@ -178,6 +198,7 @@ function App() {
                 initialAccessRole="admin"
                 initialMode="login"
                 onAuthSuccess={handleAuthSuccess}
+                onRegistrationVerified={handleRegistrationVerified}
                 onAuthRouteChange={(nextAccessRole, nextMode) => navigate(authPath(nextAccessRole, nextMode))}
               />
             </AuthRoute>
@@ -191,6 +212,7 @@ function App() {
                 initialAccessRole="admin"
                 initialMode="register"
                 onAuthSuccess={handleAuthSuccess}
+                onRegistrationVerified={handleRegistrationVerified}
                 onAuthRouteChange={(nextAccessRole, nextMode) => navigate(authPath(nextAccessRole, nextMode))}
               />
             </AuthRoute>

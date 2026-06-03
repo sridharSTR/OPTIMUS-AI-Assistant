@@ -12,7 +12,6 @@ class DocumentSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "filename",
-            "file",
             "file_type",
             "file_size",
             "processed",

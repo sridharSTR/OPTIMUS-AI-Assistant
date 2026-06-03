@@ -97,9 +97,13 @@ def extract_pdf_text(uploaded_file):
 
 
 def extract_pdf_text_with_pdfplumber(data):
-    with pdfplumber.open(BytesIO(data)) as pdf:
-        pages = [page.extract_text() or "" for page in pdf.pages]
-    return "\n".join(pages).strip()
+    try:
+        with pdfplumber.open(BytesIO(data)) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
+        return "\n".join(pages).strip()
+    except Exception as exc:
+        logger.warning("PDF text extraction with pdfplumber failed: %s", exc)
+        return ""
 
 
 def extract_pdf_text_with_ocr(data):
@@ -110,9 +114,13 @@ def extract_pdf_text_with_ocr(data):
         logger.warning("OCR fallback was triggered but pytesseract/pdf2image is not installed: %s", exc)
         return ""
 
-    images = convert_from_bytes(data)
-    pages = [pytesseract.image_to_string(image) for image in images]
-    return "\n".join(pages).strip()
+    try:
+        images = convert_from_bytes(data)
+        pages = [pytesseract.image_to_string(image) for image in images]
+        return "\n".join(pages).strip()
+    except Exception as exc:
+        logger.warning("OCR fallback failed: %s", exc)
+        return ""
 
 
 def extract_skills(text):

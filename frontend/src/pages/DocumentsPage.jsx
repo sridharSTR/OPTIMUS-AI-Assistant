@@ -48,7 +48,7 @@ function DocumentsPage() {
       setFile(null);
       setSelectedId(data.id);
     } catch (err) {
-      setError(err.response?.data?.detail || "Could not upload this document.");
+      setError(formatUploadError(err, "Could not upload this document."));
     } finally {
       setUploading(false);
     }
@@ -210,6 +210,16 @@ function DocumentsPage() {
       </section>
     </motion.section>
   );
+}
+
+function formatUploadError(error, fallback) {
+  const data = error.response?.data;
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  if (data.detail) return data.detail;
+  if (data.file) return Array.isArray(data.file) ? data.file.join(" ") : String(data.file);
+  const firstError = Object.values(data).flat?.()[0];
+  return firstError ? String(firstError) : fallback;
 }
 
 function formatBytes(value) {

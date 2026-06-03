@@ -1,8 +1,9 @@
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from unittest.mock import patch
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Memory, NLPEvent, ResponseCache
+from .models import Memory, NLPEvent, ResponseCache, ResumeAnalysis
 from .nlp import detect_intent, process_message
 from .services import ProviderAPIException, get_ai_response
 
@@ -115,7 +116,7 @@ class ChatNLPFlowTests(APITestCase):
         self.assertFalse(Memory.objects.filter(user=self.user, key="color").exists())
 
     @patch("ai.views.get_ai_response", return_value="Django middleware processes requests and responses.")
-    def test_general_chat_response_is_cached(self, mocked_ai):
+    def test_general_chat_response_is_saved_only_in_chat_history(self, mocked_ai):
         payload = {"message": "What is Django middleware?"}
 
         first = self.client.post("/api/ai/chat/", payload, format="json")
@@ -124,10 +125,10 @@ class ChatNLPFlowTests(APITestCase):
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 201)
         self.assertEqual(first.data["nlp"]["route"], "ai")
-        self.assertEqual(second.data["nlp"]["route"], "cache")
-        self.assertTrue(second.data["nlp"]["cache_hit"])
-        self.assertEqual(mocked_ai.call_count, 1)
-        self.assertEqual(ResponseCache.objects.count(), 1)
+        self.assertEqual(second.data["nlp"]["route"], "ai")
+        self.assertFalse(second.data["nlp"]["cache_hit"])
+        self.assertEqual(mocked_ai.call_count, 2)
+        self.assertEqual(ResponseCache.objects.count(), 0)
 
 
 class AIProviderFallbackTests(APITestCase):
@@ -140,3 +141,46 @@ class AIProviderFallbackTests(APITestCase):
         self.assertEqual(response, "Gemini fallback response")
         self.assertEqual(mocked_openrouter.call_count, 1)
         self.assertEqual(mocked_gemini.call_count, 1)
+
+
+class ResumeUploadTests(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="resume-user",
+            email="resume@example.com",
+            password="strong-pass-123",
+            email_verified=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    @patch(
+        "ai.views.analyze_resume_file",
+        return_value={
+            "filename": "resume.pdf",
+            "extracted_text": "Python Django React",
+            "skills": ["python", "django", "react"],
+            "found_skills": ["python", "django", "react"],
+            "education": [],
+            "projects": [],
+            "experience": [],
+            "missing_skills": [],
+            "detected_sections": [],
+            "missing_sections": ["Education", "Experience", "Projects"],
+            "skills_score": 18,
+            "sections_score": 0,
+            "score_explanation": "Parsed successfully.",
+            "suggestions": [],
+            "interview_questions": [],
+            "score": 18,
+        },
+    )
+    def test_resume_upload_accepts_multipart_file(self, mocked_analyze):
+        upload = SimpleUploadedFile("resume.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
+
+        response = self.client.post("/api/ai/resume-analyses/", {"file": upload}, format="multipart")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(ResumeAnalysis.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(response.data["filename"], "resume.pdf")
+        mocked_analyze.assert_called_once()

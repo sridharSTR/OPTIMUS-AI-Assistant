@@ -24,6 +24,12 @@ chartbot/
     .env.example
 ```
 
+## Workflow Presentation
+
+The project workflow slide deck is maintained in [`project_workflow_presentation.md`](./project_workflow_presentation.md).
+
+It is now plain Markdown with Marp front matter and `---` slide separators, so it works in normal Markdown preview and in Marp-based slide/export tools. In VS Code, install the **Marp for VS Code** extension, open `project_workflow_presentation.md`, and use Marp preview or export to PDF/PPTX.
+
 ## Backend Setup
 
 ```bash
@@ -71,7 +77,8 @@ The frontend uses a Vite proxy for API calls. Browser requests go to `/api/...` 
 
 - PostgreSQL is the recommended primary database for development and production.
 - Set `DB_ENGINE=postgres` and the PostgreSQL variables in `backend/.env`.
-- JWT access and refresh tokens are set as auth cookies after OTP verification; the frontend also keeps returned tokens in `localStorage` for bearer-token compatibility.
+- JWT access and refresh tokens are set as auth cookies only after successful login OTP verification.
+- Registration OTP verification activates the account but does not create a login session.
 - OTP emails are sent to the registered user's email address.
 - `ADMIN_EMAIL` is only for admin notifications and sender fallback.
 - `SHOW_DEV_OTP=False` keeps OTP hidden from the frontend.
@@ -297,7 +304,7 @@ PostgreSQL serves as the central persistence layer for OPTIMUS, storing user dat
 
 ## Secure Cookie JWT Auth
 
-JWTs are set in httpOnly cookies by the backend. The current frontend also stores returned access and refresh tokens in `localStorage` for bearer-token compatibility and refresh retry support.
+JWTs are set in httpOnly cookies by the backend after login OTP verification. The frontend stores user profile data for routing, but it does not need to store JWT access or refresh tokens in `localStorage`.
 
 Backend settings:
 
@@ -316,14 +323,14 @@ JWT_COOKIE_SAMESITE = "Strict"
 CORS_ALLOW_CREDENTIALS = True
 ```
 
-Auth responses set cookies after OTP verification:
+Login OTP verification responses set cookies:
 
 ```python
 response.set_cookie("optimus_access", access, httponly=True, secure=True, samesite="Strict")
 response.set_cookie("optimus_refresh", refresh, httponly=True, secure=True, samesite="Strict")
 ```
 
-The custom DRF auth class reads `optimus_access` from cookies and can also authenticate bearer tokens. `/api/token/refresh/` reads `optimus_refresh` from cookies or a submitted refresh token, rotates tokens, and sets fresh cookies. Logout blacklists the refresh token when available and clears both cookies.
+The custom DRF auth class reads `optimus_access` from cookies and can also authenticate bearer tokens. `/api/token/refresh/` reads `optimus_refresh` from cookies, rotates tokens, and sets fresh cookies. Logout clears both cookies.
 
 Axios is configured to send cookies with API requests:
 
@@ -331,7 +338,7 @@ Axios is configured to send cookies with API requests:
 axios.create({ baseURL: API_BASE_URL, withCredentials: true });
 ```
 
-On a `401`, React calls `/api/token/refresh/` with credentials, updates stored tokens when returned, and retries the original request.
+On a `401` from a protected API, React calls `/api/token/refresh/` with credentials and retries the original request if refresh succeeds. Public auth pages skip the startup session check when no session is stored, so logged-out login/register pages do not spam refresh attempts.
 
 ## Chat Rate Limiting
 
@@ -515,25 +522,30 @@ flowchart TD
     C -->|Login| E[React sends login request]
     D --> F[Django validates data]
     E --> G[Django validates email and password]
-    F --> H[Django generates OTP]
-    G --> H
-    H --> I[SMTP sends OTP to user email]
-    I --> J[React shows OTP input]
-    J --> K[User submits OTP]
-    K --> L[Django verifies OTP]
-    L --> M[Django returns JWT access and refresh tokens]
-    M --> N[React stores tokens]
-    N --> O[User enters chat dashboard]
-    O --> P[User sends chat message]
-    P --> Q[Django AI endpoint]
-    Q --> R{Needs live data?}
-    R -->|Yes| U[Tavily live search]
-    R -->|No| V[Use chat history and profile context]
-    U --> W[Build OPTIMUS prompt]
-    V --> W
-    W --> X[OpenRouter or Gemini]
-    X --> S[Django saves conversation and reply]
-    S --> T[React displays assistant response]
+    F --> H[Django sends registration OTP]
+    H --> I[React shows registration OTP input]
+    I --> J[User submits registration OTP]
+    J --> K[Django verifies account]
+    K --> L[No JWT tokens are created]
+    L --> M[React shows success toast]
+    M --> N[Redirect to Login page]
+    G --> O[Django sends login OTP]
+    O --> P[React shows login OTP input]
+    P --> Q[User submits login OTP]
+    Q --> R[Django verifies login OTP]
+    R --> S[Django sets JWT auth cookies]
+    S --> T[React stores user data]
+    T --> U[User enters chat dashboard]
+    U --> V[User sends chat message]
+    V --> W[Django AI endpoint]
+    W --> X{Needs live data?}
+    X -->|Yes| Y[Tavily live search]
+    X -->|No| Z[Use chat history and profile context]
+    Y --> AA[Build OPTIMUS prompt]
+    Z --> AA
+    AA --> AB[OpenRouter or Gemini]
+    AB --> AC[Django saves conversation and reply]
+    AC --> AD[React displays assistant response]
 ```
 
 ### Step-by-Step Application Workflow
@@ -570,11 +582,15 @@ This is the full OPTIMUS workflow from local startup to authenticated chat and a
    - Django creates or updates a pending user with `email_verified=False`.
    - Django generates an OTP, stores the hashed OTP in PostgreSQL, and emails the code to `user.email`.
    - React shows the OTP verification form.
+   - After registration OTP verification, Django sets `email_verified=True` and `is_active=True`.
+   - Registration OTP verification does not return JWT tokens and does not set auth cookies.
+   - React shows a registration success toast and redirects the user to the Login page.
 
 6. **Admin registration request flow**
-   - If a non-admin chooses Admin Register, Django creates an `AdminRegistrationRequest` row.
+   - If a non-admin chooses Admin Register, Django creates a normal pending user and an `AdminRegistrationRequest` row.
+   - Django still sends the registration OTP for new or unverified admin registrations.
    - Django does not grant admin access automatically.
-   - React shows an admin request message instead of opening the dashboard.
+   - After OTP verification, React redirects to Admin Login instead of opening the dashboard.
    - An existing admin or super admin must approve/promote the account before admin access is allowed.
    - The primary super admin email `sivasridhar2502@gmail.com` is always saved as `super_admin`.
 
@@ -593,13 +609,14 @@ This is the full OPTIMUS workflow from local startup to authenticated chat and a
 9. **OTP verification**
    - React sends email and OTP to `POST /api/users/verify-otp/`.
    - Django checks the OTP hash, expiry, attempt count, and matching email.
-   - Django marks the user as active and email verified.
-   - Django returns `access`, `refresh`, and `user` including `user.role`.
-   - Auth cookies are set by the backend, and the frontend stores the user/session data for routing.
+   - For registration OTPs, Django marks the user as active and email verified, returns a success message, and does not create JWT tokens.
+   - For login OTPs, Django returns authenticated user data and sets JWT access and refresh cookies.
+   - The frontend stores user/session data only after login OTP verification.
 
 10. **Role-based redirect**
-    - If `user.role` is `super_admin`, `admin`, or `moderator`, React redirects to `/admin`.
-    - If `user.role` is `user`, React redirects to `/chat`.
+    - After registration OTP verification, React redirects to Login.
+    - After login OTP verification, if `user.role` is `super_admin`, `admin`, or `moderator`, React redirects to `/admin`.
+    - After login OTP verification, if `user.role` is `user`, React redirects to `/chat`.
     - If a normal user manually opens `/admin`, React shows an admin-only access message.
 
 11. **Chat request flow**
@@ -650,7 +667,7 @@ This is the full OPTIMUS workflow from local startup to authenticated chat and a
 19. **Logout workflow**
     - User clicks logout.
     - React calls `POST /api/users/logout/`.
-    - Django clears auth cookies and blacklists the refresh token when available.
+    - Django clears auth cookies.
     - React clears stored session data and returns to the login page.
 
 ### Complete Chatbot Request-Response Workflow (Step-by-Step)
@@ -660,7 +677,7 @@ Below is the step-by-step journey of a chat message through the OPTIMUS chatbot 
 1. **User Interaction (Frontend)**:
    - The user types a message in the React chatbot interface and clicks send.
    - The React client sends a `POST` request to `/api/ai/chat/` containing the `message` (raw text query) and an optional `conversation_id`.
-   - The request includes the JWT `Authorization: Bearer <access_token>` header.
+   - The request includes auth cookies, and the backend reads the JWT access token from the `optimus_access` cookie.
 
 2. **Authentication & Permissions (Backend)**:
    - Django REST Framework (DRF) JWT middleware intercepts the request to validate the token and verify the user.
@@ -856,9 +873,10 @@ http://localhost:5174
 1. Register with username, display name, email, and password.
 2. Check email or console output for OTP.
 3. Verify OTP.
-4. Login if needed.
-5. Send chat messages to OPTIMUS
-6. Ask live/current questions such as `today's news` to test Tavily.
+4. After the registration success message, log in with email and password.
+5. Verify the login OTP.
+6. Send chat messages to OPTIMUS.
+7. Ask live/current questions such as `today's news` to test Tavily.
 
 ### 10. Verify before changes are complete
 
@@ -942,7 +960,7 @@ TAVILY_MAX_RESULTS=5
 
 ## Registration Workflow
 
-During registration, the user account is created but not allowed into the dashboard until OTP verification is complete.
+During registration, the user account is created but not allowed into the dashboard. Registration OTP verification activates the account, then the user must log in separately.
 
 ```mermaid
 sequenceDiagram
@@ -966,8 +984,9 @@ sequenceDiagram
     React->>Django: POST /api/users/verify-otp/
     Django->>DB: Check OTP hash and expiry
     Django->>DB: Set email_verified=true and is_active=true
-    Django-->>React: Return JWT tokens and user data
-    React-->>User: Open dashboard
+    Django-->>React: Return registration success, no JWT tokens
+    React-->>User: Show success toast
+    React->>React: Redirect to Login page
 ```
 
 Registration rules:
@@ -976,7 +995,43 @@ Registration rules:
 2. OTP is sent to `user.email`.
 3. `ADMIN_EMAIL` is not used as the OTP recipient.
 4. User cannot access protected APIs until OTP is verified.
-5. Welcome email is sent to `user.email` after successful registration verification.
+5. Registration OTP verification sets `email_verified=True` and `is_active=True`.
+6. Registration OTP verification never creates JWT tokens or auth cookies.
+7. Registration OTP verification never logs the user in automatically.
+8. React shows `Registration Successful. Your account has been verified successfully.` and redirects to Login.
+
+## Admin Registration Workflow
+
+Admin registration creates an approval request and still verifies the email address.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant React
+    participant Django
+    participant DB as Database
+    participant SMTP as Gmail SMTP
+
+    User->>React: Choose Admin Register and enter details
+    React->>Django: POST /api/users/register/ with access_role=admin
+    Django->>DB: Create pending normal user
+    Django->>DB: Create AdminRegistrationRequest
+    Django->>DB: Save hashed registration OTP
+    Django->>SMTP: Send OTP to user.email
+    Django-->>React: requires_otp=true
+    User->>React: Enter OTP
+    React->>Django: POST /api/users/verify-otp/
+    Django->>DB: Verify email and activate account
+    Django-->>React: Registration success, no JWT tokens
+    React->>React: Redirect to Admin Login
+```
+
+Admin registration rules:
+
+1. New admin registrations receive a registration OTP.
+2. Email verification does not grant admin role automatically.
+3. The account remains `role=user` until an admin or super admin approves/promotes it.
+4. Existing verified users requesting admin access create an admin request without resetting their account.
 
 ## Login Workflow
 
@@ -1003,7 +1058,7 @@ sequenceDiagram
     User->>React: Enter OTP
     React->>Django: POST /api/users/verify-otp/
     Django->>DB: Verify OTP
-    Django-->>React: Return JWT tokens and user data
+    Django-->>React: Set JWT cookies and return user data
     React-->>User: Open dashboard
 ```
 
@@ -1012,7 +1067,8 @@ Login rules:
 1. Login uses the registered email address.
 2. Login does not return tokens before OTP verification.
 3. OTP is sent to `user.email`.
-4. Dashboard opens only after `/api/users/verify-otp/` returns tokens.
+4. JWT cookies are created only after successful login OTP verification.
+5. Dashboard opens only after `/api/users/verify-otp/` verifies a login OTP.
 
 ## Email Workflow
 
@@ -1022,8 +1078,8 @@ User emails and admin emails are separated.
 flowchart LR
     A[User action] --> B{Email type}
     B -->|OTP email| C[send_user_email]
-    B -->|Welcome email| C
-    B -->|Password reset email| C
+    B -->|Registration OTP| C
+    B -->|Login OTP| C
     C --> D[recipient_list = user.email]
     D --> E[Gmail SMTP]
     E --> F[User inbox]
@@ -1051,7 +1107,7 @@ Explanation:
 
 - `DEFAULT_FROM_EMAIL` is the sender address.
 - `EMAIL_HOST_USER` is the Gmail account used to send mail.
-- `user.email` is the recipient for OTP, welcome, password reset, and confirmation emails.
+- `user.email` is the recipient for registration and login OTP emails.
 - `ADMIN_EMAIL` is only for admin notifications.
 
 ## Chat Workflow
@@ -1088,24 +1144,27 @@ sequenceDiagram
 6. Login sends `email`, `password`, and `access_role` to Django.
 7. If Django returns `requires_otp=true`, React shows the OTP input.
 8. React sends `email` and `otp` to `/api/users/verify-otp/`.
-9. Django returns `access`, `refresh`, and `user`.
-10. React stores the session data needed for UI routing.
-11. React redirects admins to `/admin` and normal users to `/chat`.
-12. Normal users who open `/admin` see an admin-only access message.
+9. If the OTP purpose is registration, Django returns a registration success response with no tokens.
+10. React shows a success toast and redirects to Login after registration OTP verification.
+11. If the OTP purpose is login, Django sets JWT cookies and returns `user` data.
+12. React stores the session data needed for UI routing only after login OTP verification.
+13. React redirects admins to `/admin` and normal users to `/chat` after login.
+14. Normal users who open `/admin` see an admin-only access message.
 
 ## Backend Workflow
 
 1. `RegisterSerializer` validates registration data.
 2. User registration creates a pending account and sends OTP to `user.email`.
-3. Admin registration by a non-admin creates an `AdminRegistrationRequest` instead of granting admin access.
+3. New admin registration creates a pending account, creates an `AdminRegistrationRequest`, and sends OTP to `user.email`.
 4. `LoginSerializer` validates email/password.
 5. Admin login is blocked unless the user role is `super_admin`, `admin`, or `moderator`.
 6. `create_and_send_otp()` generates an OTP, stores the hash in PostgreSQL, and emails the code.
-7. `VerifyOTPSerializer` validates OTP, activates the user, marks `email_verified=True`, and returns JWT tokens with user details.
-8. `CookieJWTAuthentication` authenticates protected requests from auth cookies or bearer tokens.
-9. `IsEmailVerified` blocks protected APIs until OTP verification is complete.
-10. AI chat endpoints require valid authentication and verified email.
-11. Admin APIs require admin roles and enforce role checks on sensitive actions.
+7. `VerifyOTPSerializer` validates registration OTPs, activates the user, marks `email_verified=True`, and returns no JWT tokens.
+8. `VerifyOTPSerializer` validates login OTPs, updates login tracking, and returns user details while the view sets JWT cookies.
+9. `CookieJWTAuthentication` authenticates protected requests from auth cookies or bearer tokens.
+10. `IsEmailVerified` blocks protected APIs until OTP verification is complete.
+11. AI chat endpoints require valid authentication and verified email.
+12. Admin APIs require admin roles and enforce role checks on sensitive actions.
 
 ## HTTPS Development Flow
 
@@ -1129,6 +1188,6 @@ Do not call Django directly with HTTPS unless Django is configured with HTTPS se
 
 ## How It Works
 
-The backend exposes auth and chat endpoints through Django REST Framework. Register and login both require OTP email verification before JWT tokens are returned. Authenticated chat requests are saved as `Message` rows linked to a user-owned `Conversation`. The AI service sends recent conversation context to OpenRouter or Gemini, then stores the assistant response.
+The backend exposes auth and chat endpoints through Django REST Framework. Register and login both require OTP email verification, but only login OTP verification returns an authenticated session. Registration OTP verification only activates and verifies the account, then the user must log in. Authenticated chat requests are saved as `Message` rows linked to a user-owned `Conversation`. The AI service sends recent conversation context to OpenRouter or Gemini, then stores the assistant response.
 
-The frontend has login/register screens, an OTP verification step, and a chat page. Axios attaches the JWT bearer token and attempts token refresh when the access token expires.
+The frontend has login/register screens, an OTP verification step, and a chat page. Axios sends auth cookies with protected API requests and attempts token refresh when the access token expires.

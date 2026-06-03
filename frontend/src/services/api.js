@@ -9,7 +9,7 @@ const getDefaultApiBaseUrl = () => {
     return "/api";
   }
 
-  const hostname = ["localhost", "0.0.0.0"].includes(window.location.hostname)
+  const hostname = window.location.hostname === "0.0.0.0"
     ? "127.0.0.1"
     : window.location.hostname || "127.0.0.1";
 
@@ -20,29 +20,21 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || getDefaultApiBa
 const joinApiUrl = (path) => `${API_BASE_URL.replace(/\/$/, "")}${path}`;
 const AUTH_USER_KEY = "user";
 const AUTH_ROLE_KEY = "role";
-const AUTH_ACCESS_KEY = "access";
-const AUTH_REFRESH_KEY = "refresh";
 const LEGACY_AUTH_USER_KEY = "jarvis_user";
 const LEGACY_AUTH_ROLE_KEY = "jarvis_role";
+const LEGACY_AUTH_ACCESS_KEY = "access";
+const LEGACY_AUTH_REFRESH_KEY = "refresh";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
 });
 
-api.interceptors.request.use((config) => {
-  const access = window.localStorage.getItem(AUTH_ACCESS_KEY);
-  if (access && !config.headers.Authorization) {
-    config.headers.Authorization = `Bearer ${access}`;
-  }
-  return config;
-});
-
 export const clearStoredTokens = () => {
   window.localStorage.removeItem(AUTH_USER_KEY);
   window.localStorage.removeItem(AUTH_ROLE_KEY);
-  window.localStorage.removeItem(AUTH_ACCESS_KEY);
-  window.localStorage.removeItem(AUTH_REFRESH_KEY);
+  window.localStorage.removeItem(LEGACY_AUTH_ACCESS_KEY);
+  window.localStorage.removeItem(LEGACY_AUTH_REFRESH_KEY);
   window.localStorage.removeItem(LEGACY_AUTH_USER_KEY);
   window.localStorage.removeItem(LEGACY_AUTH_ROLE_KEY);
   window.dispatchEvent(new Event("auth:cleared"));
@@ -57,14 +49,10 @@ export const storeAuthUser = (user) => {
   window.dispatchEvent(new Event("auth:updated"));
 };
 
-export const storeAuthSession = ({ user, access, refresh }) => {
+export const storeAuthSession = ({ user }) => {
   storeAuthUser(user);
-  if (access) {
-    window.localStorage.setItem(AUTH_ACCESS_KEY, access);
-  }
-  if (refresh) {
-    window.localStorage.setItem(AUTH_REFRESH_KEY, refresh);
-  }
+  window.localStorage.removeItem(LEGACY_AUTH_ACCESS_KEY);
+  window.localStorage.removeItem(LEGACY_AUTH_REFRESH_KEY);
 };
 
 export const getStoredAuthUser = () => {
@@ -95,18 +83,11 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && canAttemptRefresh && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
-        const refreshToken = window.localStorage.getItem(AUTH_REFRESH_KEY);
-        const refreshResponse = await axios.post(
+        await axios.post(
           joinApiUrl("/token/refresh/"),
-          refreshToken ? { refresh: refreshToken } : {},
+          {},
           { withCredentials: true },
         );
-        if (refreshResponse.data?.access) {
-          window.localStorage.setItem(AUTH_ACCESS_KEY, refreshResponse.data.access);
-        }
-        if (refreshResponse.data?.refresh) {
-          window.localStorage.setItem(AUTH_REFRESH_KEY, refreshResponse.data.refresh);
-        }
         return api(originalRequest);
       } catch (refreshError) {
         clearStoredTokens();
@@ -123,7 +104,7 @@ export const authApi = {
   register: (payload) => api.post("/users/register/", payload),
   verifyOtp: (payload) => api.post("/users/verify-otp/", payload),
   login: (payload) => api.post("/users/login/", payload),
-  logout: () => api.post("/users/logout/", {}),
+  logout: () => api.post("/users/logout/", {}, { skipAuthRefresh: true }),
   me: (config = {}) => api.get("/users/me/", config),
   updateProfile: (payload) => api.patch("/users/me/", payload),
 };
@@ -147,9 +128,7 @@ export const nlpApi = {
   analyzeResume: (file) => {
     const formData = new window.FormData();
     formData.append("file", file);
-    return api.post("/ai/resume-analyses/", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    return api.post("/ai/resume-analyses/", formData);
   },
 };
 
@@ -159,7 +138,6 @@ export const ragApi = {
     const formData = new window.FormData();
     formData.append("file", file);
     return api.post("/rag/upload/", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
       onUploadProgress,
     });
   },

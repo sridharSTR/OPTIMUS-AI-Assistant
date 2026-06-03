@@ -29,12 +29,10 @@ def clear_auth_cookies(response):
         settings.JWT_AUTH_COOKIE,
         path="/",
         samesite=settings.JWT_COOKIE_SAMESITE,
-        secure=settings.JWT_COOKIE_SECURE,
     )
     response.delete_cookie(
         settings.JWT_REFRESH_COOKIE,
         path="/",
         samesite=settings.JWT_COOKIE_SAMESITE,
-        secure=settings.JWT_COOKIE_SECURE,
     )
     return response

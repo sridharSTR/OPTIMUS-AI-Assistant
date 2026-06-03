@@ -10,7 +10,6 @@ db.sqlite3
 .env
 backend/.env
 frontend/.env
-backend/staticfiles*/
 
 # Node.js
 node_modules/

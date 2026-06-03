@@ -310,7 +310,7 @@ class Document(models.Model):
         db_index=True
     )
     filename = models.CharField(max_length=255)
-    file = models.FileField(upload_to="documents/%Y/%m/%d/")
+    file_data = models.BinaryField(help_text="Original uploaded document bytes stored in PostgreSQL")
     file_type = models.CharField(max_length=10, choices=FILE_TYPES, db_index=True)
     file_size = models.PositiveIntegerField()  # Bytes
     extracted_text = models.TextField(blank=True)

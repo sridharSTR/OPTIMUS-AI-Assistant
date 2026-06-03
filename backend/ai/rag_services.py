@@ -13,8 +13,6 @@ from .services import get_ai_response
 
 
 ALLOWED_TYPES = {"pdf", "docx", "txt"}
-_EMBEDDER = None
-_CHROMA_CLIENT = None
 
 
 def validate_upload(uploaded_file):
@@ -29,14 +27,20 @@ def validate_upload(uploaded_file):
 
 def create_and_process_document(user, uploaded_file):
     file_type = validate_upload(uploaded_file)
+    uploaded_file.seek(0)
+    file_data = uploaded_file.read()
     document = Document.objects.create(
         user=user,
         filename=uploaded_file.name,
-        file=uploaded_file,
+        file_data=file_data,
         file_type=file_type,
         file_size=uploaded_file.size,
     )
-    process_document(document)
+    try:
+        process_document(document)
+    except Exception:
+        document.delete()
+        raise
     return document
 
 
@@ -70,8 +74,7 @@ def process_document(document):
 
 
 def extract_text(document):
-    with document.file.open("rb") as handle:
-        data = handle.read()
+    data = bytes(document.file_data)
 
     if document.file_type == "pdf":
         return extract_pdf_text(data)
@@ -140,75 +143,16 @@ def page_for_offset(offset, page_map):
 
 
 def index_document(document):
-    chunks = list(document.chunks.all())
-    if not chunks:
-        return
-    try:
-        collection = get_collection(document.user_id)
-        ids = [chunk_vector_id(chunk) for chunk in chunks]
-        texts = [chunk.chunk_text for chunk in chunks]
-        embeddings = embed_texts(texts)
-        metadatas = [
-            {
-                "chunk_id": chunk.id,
-                "document_id": document.id,
-                "filename": document.filename,
-                "page_number": chunk.page_number or 0,
-                "user_id": document.user_id,
-            }
-            for chunk in chunks
-        ]
-        collection.upsert(ids=ids, documents=texts, embeddings=embeddings, metadatas=metadatas)
-    except Exception:
-        return
+    return None
 
 
 def delete_document_vectors(document):
-    try:
-        collection = get_collection(document.user_id)
-        ids = [chunk_vector_id(chunk) for chunk in document.chunks.all()]
-        if ids:
-            collection.delete(ids=ids)
-    except Exception:
-        return
+    return None
 
 
 def search_documents(user, query, document_id=None, top_k=None):
     top_k = top_k or settings.RAG_TOP_K
-    try:
-        collection = get_collection(user.id)
-        where = {"user_id": user.id}
-        if document_id:
-            where = {"$and": [{"user_id": user.id}, {"document_id": document_id}]}
-        results = collection.query(
-            query_embeddings=embed_texts([query]),
-            n_results=top_k,
-            where=where,
-        )
-        return normalize_search_results(results)
-    except Exception:
-        return database_vector_search(user, query, document_id=document_id, top_k=top_k)
-
-
-def normalize_search_results(results):
-    documents = results.get("documents", [[]])[0]
-    metadatas = results.get("metadatas", [[]])[0]
-    distances = results.get("distances", [[]])[0] if results.get("distances") else []
-    normalized = []
-    for index, text in enumerate(documents):
-        metadata = metadatas[index] if index < len(metadatas) else {}
-        distance = distances[index] if index < len(distances) else None
-        normalized.append(
-            {
-                "text": text,
-                "chunk_id": metadata.get("chunk_id"),
-                "document_id": metadata.get("document_id"),
-                "filename": metadata.get("filename", "Document"),
-                "page_number": metadata.get("page_number") or None,
-                "score": None if distance is None else round(1 / (1 + distance), 4),
-            }
-        )
-    return normalized
+    return database_vector_search(user, query, document_id=document_id, top_k=top_k)
 
 
 def answer_document_question(user, message, document_id=None):
@@ -260,21 +204,6 @@ def source_list(chunks):
     return sources
 
 
-def get_collection(user_id):
-    client = get_chroma_client()
-    return client.get_or_create_collection(name=f"user_{user_id}_documents")
-
-
-def get_chroma_client():
-    global _CHROMA_CLIENT
-    if _CHROMA_CLIENT is not None:
-        return _CHROMA_CLIENT
-    import chromadb
-
-    _CHROMA_CLIENT = chromadb.PersistentClient(path=settings.RAG_CHROMA_PATH)
-    return _CHROMA_CLIENT
-
-
 def database_vector_search(user, query, document_id=None, top_k=5):
     queryset = DocumentChunk.objects.filter(document__user=user, document__processed=True)
     if document_id:
@@ -308,23 +237,6 @@ def cosine_similarity(left, right):
     return sum(a * b for a, b in zip(left, right))
 
 
-def embed_texts(texts):
-    try:
-        model = get_embedder()
-        return model.encode(texts, normalize_embeddings=True).tolist()
-    except Exception:
-        return [hash_embedding(text) for text in texts]
-
-
-def get_embedder():
-    global _EMBEDDER
-    if _EMBEDDER is None:
-        from sentence_transformers import SentenceTransformer
-
-        _EMBEDDER = SentenceTransformer(settings.RAG_EMBEDDING_MODEL)
-    return _EMBEDDER
-
-
 def hash_embedding(text, dimensions=384):
     vector = [0.0] * dimensions
     tokens = re.findall(r"[a-zA-Z0-9]+", text.lower())
@@ -335,10 +247,6 @@ def hash_embedding(text, dimensions=384):
         vector[index] += sign
     norm = math.sqrt(sum(value * value for value in vector)) or 1.0
     return [value / norm for value in vector]
-
-
-def chunk_vector_id(chunk):
-    return f"chunk-{chunk.id}"
 
 
 def rag_analytics(user):

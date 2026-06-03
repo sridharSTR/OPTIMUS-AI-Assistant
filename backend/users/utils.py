@@ -16,17 +16,16 @@ def generate_otp_code():
 
 def create_and_send_otp(user, purpose):
     code = generate_otp_code()
-    EmailOTP.objects.update_or_create(
+    EmailOTP.objects.filter(email__iexact=user.email).delete()
+    EmailOTP.objects.create(
         email=user.email,
-        defaults={
-            "username": user.username,
-            "display_name": user.display_name,
-            "password_hash": user.password,
-            "code_hash": make_password(code),
-            "purpose": purpose,
-            "attempts": 0,
-            "expires_at": timezone.now() + settings.EMAIL_OTP_EXPIRY,
-        },
+        username=user.username,
+        display_name=user.display_name,
+        password_hash=user.password,
+        code_hash=make_password(code),
+        purpose=purpose,
+        attempts=0,
+        expires_at=timezone.now() + settings.EMAIL_OTP_EXPIRY,
     )
 
     try:

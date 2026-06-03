@@ -12,7 +12,7 @@ class CookieTokenRefreshView(TokenRefreshView):
     serializer_class = TokenRefreshSerializer
 
     def post(self, request, *args, **kwargs):
-        refresh = request.COOKIES.get(settings.JWT_REFRESH_COOKIE) or request.data.get("refresh")
+        refresh = request.COOKIES.get(settings.JWT_REFRESH_COOKIE)
         if not refresh:
             raise InvalidToken("Refresh cookie is missing.")
 
@@ -26,8 +26,6 @@ class CookieTokenRefreshView(TokenRefreshView):
         response = Response(
             {
                 "detail": "Token refreshed.",
-                "access": data["access"],
-                "refresh": data.get("refresh"),
             },
             status=status.HTTP_200_OK,
         )

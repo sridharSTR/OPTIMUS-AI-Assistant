@@ -1,4 +1,3 @@
-from django.conf import settings
 from datetime import timedelta
 from django.db.models import Avg, Count
 from django.db.models.functions import TruncDate
@@ -6,12 +5,13 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.permissions import IsAdminUser
 from rest_framework.exceptions import APIException, Throttled
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Conversation, Memory, Message, NLPEvent, ResponseCache, ResumeAnalysis
-from .nlp import get_fast_local_response, memory_context, normalize_question, process_message, question_hash, should_search_live_web
+from .nlp import get_fast_local_response, memory_context, process_message, question_hash, should_search_live_web
 from .resume import analyze_resume_file
 from .serializers import (
     ChatRequestSerializer,
@@ -259,7 +259,6 @@ class ChatView(APIView):
 
         ai_content = get_ai_response(messages)
         route = "search" if nlp_result["search_triggered"] else "ai"
-        save_cached_response(request.user, user_message, ai_content, nlp_result["intent"])
         assistant_message = Message.objects.create(
             conversation=conversation,
             role="assistant",
@@ -310,22 +309,6 @@ def get_cached_response(user, message, intent):
     cache.hits += 1
     cache.save(update_fields=["hits", "updated_at"])
     return cache
-
-
-def save_cached_response(user, message, response, intent):
-    if intent in {"web_search", "resume_analysis"}:
-        return
-    is_web_result = intent == "web_search"
-    ResponseCache.objects.update_or_create(
-        question_hash=question_hash(message, user.id),
-        defaults={
-            "normalized_question": normalize_question(message),
-            "response": response,
-            "intent": intent,
-            "ttl_seconds": settings.TAVILY_CACHE_TTL_SECONDS if is_web_result else None,
-            "is_web_result": is_web_result,
-        },
-    )
 
 
 def update_event_route(event, route, handled_locally=False, cache_hit=False, ai_called=False):
@@ -492,6 +475,8 @@ class ResponseCacheListView(generics.ListAPIView):
 
 
 class ResumeAnalysisListCreateView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
     def get(self, request):
         analyses = ResumeAnalysis.objects.filter(user=request.user)
         return Response(ResumeAnalysisSerializer(analyses, many=True).data)

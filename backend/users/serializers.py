@@ -1,4 +1,5 @@
 from django.contrib.auth.hashers import check_password
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -27,7 +28,9 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         email = value.lower()
-        if User.objects.filter(email__iexact=email, email_verified=True).exists():
+        access_role = (getattr(self, "initial_data", {}) or {}).get("access_role")
+        existing_user = User.objects.filter(email__iexact=email, email_verified=True).first()
+        if existing_user and not (access_role == "admin" and existing_user.role not in ADMIN_ROLES):
             raise serializers.ValidationError("A user with this email already exists.")
         return email
 
@@ -46,6 +49,8 @@ class RegisterSerializer(serializers.Serializer):
             existing_user = User.objects.filter(email__iexact=email).first()
             if existing_user and existing_user.role in ADMIN_ROLES:
                 raise serializers.ValidationError({"email": "This email already has admin access. Please use Admin Login."})
+            if existing_user and existing_user.email_verified and not existing_user.check_password(attrs["password"]):
+                raise serializers.ValidationError({"password": "Enter your current account password to request admin access."})
         default_username = self._available_username(email.split("@")[0])
         attrs["username"] = attrs.get("username") or default_username
         attrs["display_name"] = attrs.get("full_name") or attrs.get("display_name") or attrs["username"]
@@ -66,6 +71,27 @@ class RegisterSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         user = User.objects.filter(email__iexact=validated_data["email"]).first()
+        if (
+            validated_data.get("access_role") == "admin"
+            and user
+            and user.email_verified
+            and user.email.lower() != User.PRIMARY_SUPER_ADMIN_EMAIL
+        ):
+            AdminRegistrationRequest.objects.update_or_create(
+                user=user,
+                defaults={
+                    "requested_role": User.Role.ADMIN,
+                    "status": AdminRegistrationRequest.Status.PENDING,
+                    "reviewed_by": None,
+                    "reviewed_at": None,
+                },
+            )
+            self.context["pending_admin_request"] = True
+            self.context["admin_request_message"] = (
+                "Admin registration request sent. An existing admin can approve it from the admin panel."
+            )
+            return user
+
         if user is None:
             user = User(
                 username=validated_data["username"],
@@ -98,11 +124,6 @@ class RegisterSerializer(serializers.Serializer):
                     "reviewed_at": None,
                 },
             )
-            self.context["pending_admin_request"] = True
-            self.context["admin_request_message"] = (
-                "Admin registration request sent. An existing admin can approve it from the admin panel."
-            )
-            return user
 
         code, message = create_and_send_otp(user, EmailOTP.Purpose.REGISTER)
         self.context["otp_code"] = code
@@ -116,10 +137,10 @@ class VerifyOTPSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         email = attrs["email"].lower()
-        try:
-            otp = EmailOTP.objects.get(email__iexact=email)
-        except EmailOTP.DoesNotExist as exc:
-            raise serializers.ValidationError("No pending verification was found for this email.") from exc
+        otp = EmailOTP.objects.filter(email__iexact=email).order_by("-created_at").first()
+        if otp is None:
+            raise serializers.ValidationError("No pending verification was found for this email.")
+        EmailOTP.objects.filter(email__iexact=email).exclude(pk=otp.pk).delete()
 
         if otp.is_expired:
             otp.delete()
@@ -144,15 +165,35 @@ class VerifyOTPSerializer(serializers.Serializer):
             otp.delete()
             raise serializers.ValidationError("This OTP does not match the account email.")
 
-        user.is_active = True
-        user.email_verified = True
-        user.display_name = otp.display_name
-        user.save()
+        update_fields = []
+        if otp.purpose == EmailOTP.Purpose.REGISTER:
+            user.is_active = True
+            user.email_verified = True
+            user.display_name = otp.display_name
+            update_fields = ["is_active", "email_verified", "display_name"]
+        elif otp.purpose == EmailOTP.Purpose.LOGIN:
+            if not user.is_active or not user.email_verified:
+                otp.delete()
+                raise serializers.ValidationError("Please verify your registration before logging in.")
+            user.last_login_at = timezone.now()
+            update_fields = ["last_login_at"]
+
+        if update_fields:
+            user.save(update_fields=update_fields)
         otp.delete()
+
+        if otp.purpose == EmailOTP.Purpose.REGISTER:
+            return {
+                "user": UserSerializer(user).data,
+                "purpose": EmailOTP.Purpose.REGISTER,
+                "registration_verified": True,
+                "detail": "Registration Successful. Your account has been verified successfully.",
+            }
 
         refresh = RefreshToken.for_user(user)
         return {
             "user": UserSerializer(user).data,
+            "purpose": EmailOTP.Purpose.LOGIN,
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         }
@@ -179,6 +220,8 @@ class LoginSerializer(serializers.Serializer):
             user.save()
         if user.is_banned:
             raise serializers.ValidationError("This account has been banned. Contact the administrator.")
+        if not user.email_verified or not user.is_active:
+            raise serializers.ValidationError("Please verify your registration OTP before logging in.")
         if attrs.get("access_role") == "admin" and user.role not in ADMIN_ROLES:
             raise serializers.ValidationError(ADMIN_ONLY_MESSAGE)
 

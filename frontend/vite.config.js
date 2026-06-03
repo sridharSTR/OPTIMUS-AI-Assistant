@@ -23,6 +23,50 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+
+            if (
+              id.includes("node_modules/react/") ||
+              id.includes("node_modules/react-dom/") ||
+              id.includes("node_modules/scheduler/")
+            ) {
+              return "vendor-react";
+            }
+            if (id.includes("recharts") || id.includes("d3-")) {
+              return "vendor-charts";
+            }
+            if (
+              id.includes("react-markdown") ||
+              id.includes("remark-") ||
+              id.includes("rehype-") ||
+              id.includes("highlight.js") ||
+              id.includes("hast-util") ||
+              id.includes("mdast-util") ||
+              id.includes("micromark") ||
+              id.includes("unified") ||
+              id.includes("unist-")
+            ) {
+              return "vendor-markdown";
+            }
+            if (id.includes("node_modules/lucide-react/")) {
+              return "vendor-icons";
+            }
+            if (id.includes("node_modules/framer-motion/")) {
+              return "vendor-animation";
+            }
+            if (id.includes("axios") || id.includes("react-router-dom") || id.includes("@remix-run")) {
+              return "vendor-app";
+            }
+
+            return undefined;
+          },
+        },
+      },
+    },
     server: {
       host: "0.0.0.0",
       port: 5174,
