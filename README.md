@@ -1191,3 +1191,10 @@ Do not call Django directly with HTTPS unless Django is configured with HTTPS se
 The backend exposes auth and chat endpoints through Django REST Framework. Register and login both require OTP email verification, but only login OTP verification returns an authenticated session. Registration OTP verification only activates and verifies the account, then the user must log in. Authenticated chat requests are saved as `Message` rows linked to a user-owned `Conversation`. The AI service sends recent conversation context to OpenRouter or Gemini, then stores the assistant response.
 
 The frontend has login/register screens, an OTP verification step, and a chat page. Axios sends auth cookies with protected API requests and attempts token refresh when the access token expires.
+
+---
+
+<div align="center">
+  <sub>Made by <a href="https://github.com/sridharSTR">sridhar manoharan</a></sub>
+</div>
+
